@@ -1,2 +1,6 @@
-eunuchs.mod.o eunuchs.o
-eunuchs.ko
+*.o
+*.ko
+*.order
+*.symvers
+.tmp_versions/*
+*.cmd
