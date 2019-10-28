@@ -26,6 +26,7 @@ static const struct modversion_info ____versions[]
 __used
 __attribute__((section("__versions"))) = {
 	{ 0x48ff17dd, "module_layout" },
+	{ 0xf7d9209, "__x86_indirect_thunk_eax" },
 	{ 0xe445e0e7, "printk" },
 	{ 0xbdfb6dbb, "__fentry__" },
 };
@@ -35,3 +36,5 @@ __used
 __attribute__((section(".modinfo"))) =
 "depends=";
 
+
+MODULE_INFO(srcversion, "9901C0F5BEEF00A37D39B6D");
