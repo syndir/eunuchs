@@ -34,6 +34,7 @@ MODULE_ALIAS("yes");
 unsigned original_cr0;
 
 /*
+ * As root...
  * 1. add `nokaslr` to /etc/default/grub in GRUB_CMDLINE_LINUX_DEFAULT
  * 2. execute `update-grub`
  * 3. `grep sys_call_table /boot/System.map-$(uname -r)` to
@@ -46,7 +47,7 @@ static typeof(sys_read) *orig_read;
 
 asmlinkage long eunuchs_read(int fd, char __user *buf, size_t count)
 {
-    printk("reading..\n");
+    /* printk("reading..\n"); */
     return orig_read(fd, buf, count);
 }
 

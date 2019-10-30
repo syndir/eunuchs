@@ -2,7 +2,6 @@
 #define EUNUCHS_H
 
 #define DEBUG 1
-
 #define debug(fmt, ...) \
     if(DEBUG) \
     { \
