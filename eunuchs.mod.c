@@ -33,6 +33,7 @@ __attribute__((section("__versions"))) = {
 	{ 0xb53c5755, "device_create" },
 	{ 0x69faa559, "__class_create" },
 	{ 0xdacc6fbc, "__register_chrdev" },
+	{ 0xdb7305a1, "__stack_chk_fail" },
 	{ 0xe445e0e7, "printk" },
 	{ 0xf7d9209, "__x86_indirect_thunk_eax" },
 	{ 0xbdfb6dbb, "__fentry__" },
@@ -44,4 +45,4 @@ __attribute__((section(".modinfo"))) =
 "depends=";
 
 
-MODULE_INFO(srcversion, "11104AA585661F37A980723");
+MODULE_INFO(srcversion, "672E081E3659118C61C7E20");
