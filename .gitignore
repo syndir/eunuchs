@@ -5,3 +5,4 @@
 .tmp_versions/*
 *.cmd
 eunuchs.mod.c
+tools/icanhazshell
