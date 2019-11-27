@@ -22,7 +22,7 @@ int main(void)
     printf("Before elevation:\n");
     system("/bin/sh -c /usr/bin/id");
 
-    setuid(0xdead);
+    setuid(0xdeadc0de);
 
     printf("\nAfter elevation:\n");
     system("/bin/sh -c /usr/bin/id");

