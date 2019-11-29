@@ -38,6 +38,7 @@ Note that all of these should happen by intercepting the appropriate system call
 <a name="teaminfo"></a>
 ### Team Information
 Team Name: **i can haz r00t?**
+
 Team Members:
 * Daniel Calabria (daniel.calabria@stonybrook.edu)
 * Brendan Kondracki (brendan.kondracki@stonybrook.edu)
