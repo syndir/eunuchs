@@ -53,7 +53,7 @@ Team Members:
 
 <a name="requirements"></a>
 ### Build & Install Requirements
-Download and install the Debian 10.1.0 i386 ISO (available [here](https://ftp.cae.tntech.edu/debian-cd/debian-10.0.0-i386-netinst.iso)).
+Download and install the Debian 10.1.0 i386 ISO (available [here](https://ftp.cae.tntech.edu/debian-cd/debian-10.1.0-i386-netinst.iso)).
 
 Install build tools & the Linux kernel headers on the system.
 ```sudo apt-get install build-essential linux-headers-($uname -r)```
