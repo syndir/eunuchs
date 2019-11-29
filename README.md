@@ -47,11 +47,14 @@ Team Members:
 
 <a name="targetinfo"></a>
 ### Target Information
- Targets Debian 10, x86-32bit
+ Targets Debian 10.1.0, x86-32bit
+ 
  Kernel 4.19.67-2+deb10u1
 
 <a name="requirements"></a>
 ### Build & Install Requirements
+Download and install the Debian 10.1.0 i386 ISO (included in this repo).
+
 Install build tools & the Linux kernel headers on the system.
 ```sudo apt-get install build-essential linux-headers-($uname -r)```
 
@@ -124,7 +127,7 @@ Our new `read` handler checks to see if the file being read is either `/etc/pass
 
 We can determine whether or not to filter the file contents by checking how far away from the `init` process the request was made. By assuming that most programs which we would want to see the account are system daemons, we know that they should be much closer to the `init` process than a user whch is requesting to view the files. We can set a threshold for this `amount of parents` value. For example, upon ssh'ing into the box, `sshd` spawns a child, which in turns spawns another child. The resulting process hierarchy thus looks like ```systemd -> sshd -> sshd -> sshd```.
 
-The `pstree` command shows us that the last two belongto the same process group, so we can traverse up the process tree to `systemd` by getting the process group leader of the current context, and keep checking the next higher's group leader's parent, until we hit pid 1. If the amount of traversals is less than our threshold (in this case 1 traversal), we do not filter the file contents.
+The `pstree` command shows us that the last two belong to the same process group, so we can traverse up the process tree to `systemd` by getting the process group leader of the current context, and keep checking the next higher's group leader's parent, until we hit pid 1. If the amount of traversals is less than our threshold (in this case 1 traversal), we do not filter the file contents.
 
 Conversely, most users attempting to read the file by less/cat/vim/nano/etc will have a process hierarchy that looks more like ```systemd -> systemd-user -> gnome-terminal -> zsh -> less```.
 
