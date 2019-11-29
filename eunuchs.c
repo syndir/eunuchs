@@ -42,7 +42,7 @@
  *  execute this (eg, `/usr/bin/kill`)
  *
  * (3) via char device:
- *  If the user writes `icanhazr00t?` (NB: you need to properly escape this
+ *  If the user writes `icanhazr00t?` (NB: you may need to properly escape this
  *  string when echo'ing it), that user will be elevated to root.
  *
  * All other interaction with this module is done by writing to /dev/.eunuchs.
