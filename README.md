@@ -22,8 +22,11 @@
   - [Hiding / Showing the Module](#lkm)
 - [References](#references)
 
+![getoufofmybox](getoutofmybox.jpg)
+
 <a name="specifications"></a>
-###### Project 1: Linux Rootkit
+### Project Description
+#### Project 1: Linux Rootkit
 After attackers manage to gain access to a remote (or local) machine and elevate their privileges to "root", they typically want to maintain their access, while hiding their presence from the normal users and administrators of the system.
 
 In this project, you are asked to design and implement a basic rootkit for the Linux operating system (you can choose the exact distribution and kernel number). This rootkit should have the form of a loadable kernel module which when loaded into the kernel (by the attacker with root privileges) will do the following:
