@@ -944,7 +944,7 @@ static void process_hide_remove(void)
     if(kern_path("/proc", 0, &proc_p))
         return;
 
-    // restore the proc vfs & file operations
+    /* restore the proc vfs & file operations */
     proc_inode = proc_p.dentry->d_inode;
     proc_inode->i_fop = backup_proc_fileops;
 }
