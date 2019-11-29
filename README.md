@@ -167,7 +167,7 @@ To verify account injection, perform the following steps:
 1. Insert the module.
 2. Remove the module.
 3. `sudo cat /etc/passwd` and `sudo cat /etc/shadow`. Verify that an account with the name `me0wza` has been added to these files.
-4. Insert the moduke again.
+4. Insert the module again.
 5. `sudo cat /etc/passwd` and `sudo cat /etc/shadow`. Verify that the `me0wza` account is no longer visible.
 
 At this point, we have verified that the account is injected into these files and is not visible to the user. In order to verify that login daemons can still see the account, perform the following steps:
