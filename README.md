@@ -1,5 +1,5 @@
 # eunuchs
-<center>![nyan](nyan.jpg)</center>
+![nyan](nyan.jpg)
 
 - [Project Specifications](#specifications)
 - [Team Information](#teaminfo)
@@ -24,7 +24,7 @@
   - [Hiding / Showing the Module](#lkm)
 - [References](#references)
 
-<center>![getoutofmybox](getoutofmybox.jpg)</center>
+![getoutofmybox](getoutofmybox.jpg)
 
 <a name="specifications"></a>
 ### Project Description
