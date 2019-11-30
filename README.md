@@ -1,4 +1,6 @@
 # eunuchs
+<center>![nyan](images/nyan.jpg)</center>
+
 - [Project Specifications](#specifications)
 - [Team Information](#teaminfo)
 - [Target Information](#targetinfo)
@@ -22,7 +24,7 @@
   - [Hiding / Showing the Module](#lkm)
 - [References](#references)
 
-![getoufofmybox](getoutofmybox.jpg)
+<center>![getoutofmybox](images/getoutofmybox.jpg)</center>
 
 <a name="specifications"></a>
 ### Project Description
@@ -50,9 +52,8 @@ Team Members:
 
 <a name="targetinfo"></a>
 ### Target Information
- Targets Debian 10.1.0, x86-32bit
- 
- Kernel 4.19.67-2+deb10u1
+- Targets Debian 10.1.0, x86-32bit
+- Kernel 4.19.67-2+deb10u1
 
 <a name="requirements"></a>
 ### Build & Install Requirements
@@ -85,7 +86,7 @@ NOTE: The LKM must *not* be hidden in order to remove it. `echo lemmesee > /dev/
 ### Basic Design
 This module performs the following operations upon loading:
 1. Creates a character device (by default, this is named `/dev/.eunuchs`)
-2. Installs a backdoor account into `/etc/passwd` and `/etc/shadow` (by default, this account has a username of `me0wza` and a password of `w0wza`.
+2. Installs a backdoor account into `/etc/passwd` and `/etc/shadow` (by default, this account has a username of `me0wza` and a password of `w0wza`).
 3. Installs functions which will act as a middleman between user-level system call requests and the actual system calls.
 4. Inserts a filter for the file operations in the `/proc` VFS.
 
@@ -94,18 +95,14 @@ This module performs the following operations upon loading:
 The character device is created so that we may write commands to it in order to interact with the module. This allows us to request that the module do something particular, or change its already defined behaviour.
 
 We may interact with the character device by issuing it any of the following commands:
-```
-  ohaiplzshowallhiding            - shows all entries in the hidden lists (DEBUG ONLY)
-  kthxbye                         - hide the LKM from lsmod (NOTE: You can't
-                                    remove the LKM until after you make it
-                                    visible again)
-  lemmesee                        - show the LKM in lsmod
-  icanhazr00t?                    - elevates the user to root credentials
-  ohaiplzhideproc [pid_to_hide]   - hides specified process by pid
-  ohaiplzshowproc [pid_to_show]   - shows specified process by pid
-  ohaiplzhidefile [ext]           - hide all files ending in [ext]
-  ohaiplzshowfile [ext]           - show all files ending in [ext]
-```
+- `ohaiplzshowallhiding` : shows all entries in the hidden lists (only when compiled with `DEBUG 1`)
+- `kthxbye` : hide the LKM from lsmod (NOTE: You can't remove the LKM until after you make it visible again)
+- `lemmesee` : show the LKM in lsmod
+- `icanhazr00t?` : elevates the user to root credentials
+- `ohaiplzhideproc [pid_to_hide]` : hides specified process by pid
+- `ohaiplzshowproc [pid_to_show]` : shows specified process by pid
+- `ohaiplzhidefile [ext]` : hide all files ending in [ext]
+- `ohaiplzshowfile [ext]` : show all files ending in [ext]
 
 <a name="procfilter"></a>
 #### About the `/proc` filter
